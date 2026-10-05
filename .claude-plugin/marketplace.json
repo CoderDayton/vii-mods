@@ -1,0 +1,13 @@
+{
+  "name": "vii-mods",
+  "owner": { "name": "vii" },
+  "description": "Claude Code mods by vii.",
+  "plugins": [
+    {
+      "name": "dictation-repair",
+      "source": "./plugins/dictation-repair",
+      "description": "Fixes speech-to-text mishearings in your prompt, using a dictionary that learns from your corrections.",
+      "category": "prompt"
+    }
+  ]
+}

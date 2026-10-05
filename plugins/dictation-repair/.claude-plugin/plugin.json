@@ -1,0 +1,5 @@
+{
+  "name": "dictation-repair",
+  "version": "0.1.0",
+  "description": "Fixes speech-to-text mishearings in your prompt, using a dictionary that learns from your corrections."
+}
