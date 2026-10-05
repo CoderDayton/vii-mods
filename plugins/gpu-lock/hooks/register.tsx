@@ -43,8 +43,8 @@ const startHook: Hook<'session.start'> = async ($, e, next) => {
     try {
       await $.command.register({
         name: 'gpu',
-        description: 'GPU lock: pane, status, on, off, check <command>',
-        argumentHint: '[status|on|off|check <command>]',
+        description: 'GPU lock: open or close the pane, status, on, off, check <command>',
+        argumentHint: '[close|status|on|off|check <command>]',
         immediate: true,
       })
     } catch {
@@ -89,17 +89,20 @@ export const register: Register = (on, options) => {
     const args = e.args ?? ''
     const word = (args.trim().split(/\s+/)[0] ?? '').toLowerCase()
     const enabled = await read($, enabledAtom)
-    const wantsFresh = enabled && (word === '' || word === 'pane' || word === 'status')
+    const wantsFresh = enabled && (word === '' || word === 'status')
+    const isPaneOpen = (await $.ui.panes()).some(pane => pane.id === PANE_ID)
     const out = runCommand(args, {
       config,
       snapshot: wantsFresh ? await runtime.refresh(io) : await read($, snapshotAtom),
       enabled,
+      isPaneOpen,
       now: await $.clock.now(),
       session: await $.session.id(),
     })
     if (out.action === 'on') await runtime.setEnabled(io, true)
     if (out.action === 'off') await runtime.setEnabled(io, false)
-    if (out.action === 'pane') await $.ui.open({ id: PANE_ID, title: 'GPU lock' })
+    if (out.action === 'pane') await $.ui.open({ id: PANE_ID, title: 'GPU lock', closeOnEscape: true })
+    if (out.action === 'close') await $.ui.close({ id: PANE_ID })
     return { text: out.text }
   })
 
@@ -137,6 +140,7 @@ export const register: Register = (on, options) => {
       onToggle: () => {
         if (io !== null) void runtime.setEnabled(io, !enabled)
       },
+      onClose: () => $.ui.close({ id: PANE_ID }),
     })
   })
 }

@@ -33,7 +33,7 @@ export const bandView = (els: Els, m: BandModel) => {
   )
 }
 
-export type PaneActions = { onRefresh: () => void; onToggle: () => void }
+export type PaneActions = { onRefresh: () => void; onToggle: () => void; onClose: () => void }
 
 export const paneView = (els: Els, m: PaneModel, actions: PaneActions) => {
   const { Box, Text, Button } = els
@@ -87,6 +87,7 @@ export const paneView = (els: Els, m: PaneModel, actions: PaneActions) => {
       <Box gap={2}>
         <Button key="refresh" label="Refresh" hotkey="r" onPress={actions.onRefresh} />
         <Button key="toggle" label={m.enabled ? 'Turn off' : 'Turn on'} hotkey="t" onPress={actions.onToggle} />
+        <Button key="close" label="Close" hotkey="c" onPress={actions.onClose} />
       </Box>
     </Box>
   )

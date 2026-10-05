@@ -8,14 +8,18 @@ export type Context = {
   config: Config
   snapshot: Snapshot | null
   enabled: boolean
+  isPaneOpen: boolean
   now: number
   session: string
 }
 
-export type Outcome = { text: string; action?: 'pane' | 'on' | 'off' }
+export type Outcome = { text: string; action?: 'pane' | 'close' | 'on' | 'off' }
+
+const PANE_CLOSED = 'GPU lock pane closed.'
 
 const HELP = [
-  '/gpu                    open the GPU pane',
+  '/gpu                    open the GPU pane, or close it if it is open',
+  '/gpu close              close the GPU pane',
   '/gpu status             print the lock and memory state',
   '/gpu on | off           turn the lock on or off',
   '/gpu check <command>    say whether a command counts as a GPU job',
@@ -85,7 +89,10 @@ export const runCommand = (args: string, c: Context): Outcome => {
   const trimmed = args.trim()
   const [word = '', ...rest] = trimmed.split(/\s+/)
   const sub = word.toLowerCase()
-  if (sub === '' || sub === 'pane') return { text: 'GPU lock pane opened.', action: 'pane' }
+  if (sub === '') {
+    return c.isPaneOpen ? { text: PANE_CLOSED, action: 'close' } : { text: 'GPU lock pane opened.', action: 'pane' }
+  }
+  if (sub === 'close') return c.isPaneOpen ? { text: PANE_CLOSED, action: 'close' } : { text: 'The GPU lock pane is not open.' }
   if (sub === 'on') return { text: 'gpu-lock is on.', action: 'on' }
   if (sub === 'off') return { text: 'gpu-lock is off. GPU commands run unchecked.', action: 'off' }
   if (sub === 'status') return { text: status(c) }

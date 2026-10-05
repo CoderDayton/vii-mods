@@ -33,7 +33,8 @@ A declared need replaces `minFreeMiB`, higher or lower. `CUDA_VISIBLE_DEVICES=`
 
 | Command | What it does |
 | --- | --- |
-| `/gpu` | Opens the pane |
+| `/gpu` | Opens the pane, or closes it if it is open. The pane also has a Close button (`c`), and Escape closes it |
+| `/gpu close` | Closes the pane |
 | `/gpu status` | Prints lock and GPU state |
 | `/gpu on`, `/gpu off` | Turns the lock on or off (remembered across sessions) |
 | `/gpu check <command>` | Says whether a command counts as a GPU job. Runs nothing |
