@@ -8,6 +8,12 @@
       "source": "./plugins/dictation-repair",
       "description": "Fixes speech-to-text mishearings in your prompt, using a dictionary that learns from your corrections.",
       "category": "prompt"
+    },
+    {
+      "name": "gpu-lock",
+      "source": "./plugins/gpu-lock",
+      "description": "One CUDA job at a time: GPU commands run under a lock and are checked against free GPU memory first.",
+      "category": "tools"
     }
   ]
 }

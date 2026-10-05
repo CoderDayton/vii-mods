@@ -1,0 +1,49 @@
+{
+  "name": "gpu-lock",
+  "version": "0.1.0",
+  "description": "One CUDA job at a time: locks the GPU across sessions, checks free memory first, and shows who holds it.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "waitSeconds": {
+      "type": "number",
+      "title": "Wait for the lock (seconds)",
+      "description": "How long a GPU command waits for the lock before it is refused. 0 refuses at once.",
+      "default": 0,
+      "min": 0,
+      "max": 600
+    },
+    "minFreeMiB": {
+      "type": "number",
+      "title": "Least free GPU memory (MiB)",
+      "description": "A GPU command is refused when less than this is free. A command can set its own need with # gpu 8g.",
+      "default": 1024,
+      "min": 0,
+      "max": 1048576
+    },
+    "band": {
+      "type": "string",
+      "title": "Band above the prompt",
+      "description": "auto shows it while the GPU is locked or a job waits; always also shows it when the GPU is free; never hides it.",
+      "options": ["auto", "always", "never"],
+      "default": "auto"
+    },
+    "extraPatterns": {
+      "type": "string",
+      "title": "Extra GPU commands",
+      "description": "Regular expressions, one per line. A command that matches one counts as a GPU job.",
+      "default": ""
+    },
+    "skipPatterns": {
+      "type": "string",
+      "title": "Commands to skip",
+      "description": "Regular expressions, one per line. A command that matches one never counts as a GPU job.",
+      "default": ""
+    },
+    "lockPath": {
+      "type": "string",
+      "title": "Lock file",
+      "description": "The file every session locks. Shell scripts can use it too: flock <file> <command>.",
+      "default": "/tmp/gpu-lock/lock"
+    }
+  }
+}
