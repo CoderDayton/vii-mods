@@ -45,6 +45,7 @@ const startHook: Hook<'session.start'> = async ($, e, next) => {
         name: 'gpu',
         description: 'GPU lock: pane, status, on, off, check <command>',
         argumentHint: '[status|on|off|check <command>]',
+        immediate: true,
       })
     } catch {
       $.ui.toast('gpu-lock: the /gpu command could not be registered; the lock still works')

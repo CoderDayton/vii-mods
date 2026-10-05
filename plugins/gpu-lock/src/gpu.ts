@@ -1,4 +1,7 @@
 import type { App, Gpu } from '../types'
+import { clean } from './format'
+
+const APP_NAME_CHARS = 40
 
 export const SMI_GPUS = [
   'nvidia-smi',
@@ -44,16 +47,21 @@ export const parseGpus = (text: string): Gpu[] => {
   return gpus
 }
 
+const programName = (raw: string): string => {
+  const program = raw.split(/\s-/)[0] ?? raw
+  return clean(program.split(/[\\/]/).pop() ?? '', APP_NAME_CHARS)
+}
+
 export const parseApps = (text: string): App[] => {
   const apps: App[] = []
   for (const parts of lines(text)) {
-    if (parts.length !== 3) continue
+    if (parts.length < 3) continue
     const pid = num(parts[0])
     if (pid === null) continue
     apps.push({
       pid,
-      name: (parts[1] ?? '').split('/').pop() ?? '',
-      usedMiB: num(parts[2]) ?? 0,
+      name: programName(parts.slice(1, parts.length - 1).join(', ')),
+      usedMiB: num(parts[parts.length - 1]) ?? 0,
     })
   }
   return apps
