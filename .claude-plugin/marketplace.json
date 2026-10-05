@@ -4,9 +4,9 @@
   "description": "Claude Code mods by vii.",
   "plugins": [
     {
-      "name": "dictation-repair",
-      "source": "./plugins/dictation-repair",
-      "description": "Fixes speech-to-text mishearings in your prompt, using a dictionary that learns from your corrections.",
+      "name": "prompt-repair",
+      "source": "./plugins/prompt-repair",
+      "description": "Fixes your prompt before it is sent: misheard or wrong words, typos and self-corrections. Review the fix or run it automatically.",
       "category": "prompt"
     },
     {

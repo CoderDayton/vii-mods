@@ -1,18 +1,21 @@
 import { addLearned, rejectHeard, resolveEntries } from './dictionary'
 import type { Dictionary, Entry } from './types'
 
-export type State = { dict: Dictionary; enabled: boolean }
+export type Mode = 'review' | 'auto'
+
+export type State = { dict: Dictionary; enabled: boolean; mode: Mode }
 
 export type Outcome = { text: string; state: State }
 
 const LIST_LIMIT = 40
 const MAX_FIELD = 40
-const USAGE = 'usage: /dictation [status | on | off | list | add heard=meant | rm heard]'
+const USAGE = 'usage: /prompt-repair [status | on | off | review | auto | list | add heard=meant | rm heard]'
 
 const status = (state: State): string => {
   const entries = resolveEntries(state.dict)
   const learned = entries.filter(e => e.source !== 'default').length
-  return `dictation-repair is ${state.enabled ? 'on' : 'off'} · ${entries.length} entries (${learned} learned)`
+  const mode = state.mode === 'review' ? 'review (you accept each fix)' : 'auto (fixes are applied)'
+  return `prompt-repair is ${state.enabled ? 'on' : 'off'} · ${mode} · ${entries.length} entries (${learned} learned)`
 }
 
 const list = (state: State): string => {
@@ -34,6 +37,10 @@ export const runCommand = (args: string, state: State, now: number): Outcome => 
   if (verb === 'list') return { text: list(state), state }
   if (verb === 'on' || verb === 'off') {
     const next = { ...state, enabled: verb === 'on' }
+    return { text: status(next), state: next }
+  }
+  if (verb === 'review' || verb === 'auto') {
+    const next: State = { ...state, mode: verb as Mode }
     return { text: status(next), state: next }
   }
 

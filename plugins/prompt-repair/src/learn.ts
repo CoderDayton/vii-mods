@@ -19,7 +19,12 @@ const MAX_RESEND_LENGTH_DRIFT = 2
 const squash = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '')
 const wordCount = (s: string): number => s.trim().split(/\s+/).length
 
-export const isPlausiblePair = (heard: string, meant: string, terms: readonly string[]): boolean => {
+export const isPlausiblePair = (
+  heard: string,
+  meant: string,
+  terms: readonly string[],
+  isStrict = false,
+): boolean => {
   const h = heard.trim()
   const m = meant.trim()
   if (h === '' || m === '' || h.length > MAX_CHARS || m.length > MAX_CHARS) return false
@@ -36,7 +41,7 @@ export const isPlausiblePair = (heard: string, meant: string, terms: readonly st
 
   const longest = Math.max(hs.length, ms.length)
   const distance = editDistance(hs, ms)
-  if (longest >= MIN_EDIT_LENGTH && distance <= Math.floor(longest / 3)) return true
+  if (!isStrict && longest >= MIN_EDIT_LENGTH && distance <= Math.floor(longest / 3)) return true
 
   return distance <= MAX_TERM_EDIT && terms.some(t => squash(t) === ms)
 }
@@ -47,7 +52,12 @@ const NOT_FIRST = new RegExp(`\\bnot\\s+["']?(${WORD})["']?(?:\\s*,\\s*|\\s+)(?:
 const NOT_AFTER = new RegExp(`["']?(${WORD})["']?\\s*,?\\s+not\\s+["']?(${WORD})`, 'i')
 const MEANT = new RegExp(`\\b(?:i\\s+(?:meant|mean|said)|spelled|spelt)\\s+["']?(${WORD})`, 'i')
 
-type Claim = { meant: string; heard?: string; isExplicit: boolean }
+const SOFT = new RegExp(
+  `^\\W*(?:(?:no|oh)[,\\s]+)?(?:actually|wait)[,\\s]+it(?:['’]?s|\\s+is)\\s+["']?(${WORD})["']?[.!?]*\\s*$`,
+  'i',
+)
+
+type Claim = { meant: string; heard?: string; isExplicit: boolean; isStrict?: boolean }
 
 const clean = (w: string | undefined): string => (w ?? '').replace(/[.\-]+$/, '')
 
@@ -64,6 +74,9 @@ const claimsFrom = (text: string): Claim[] => {
   const said = text.match(MEANT)
   if (said !== null) return [{ meant: clean(said[1]), isExplicit: false }]
 
+  const soft = text.match(SOFT)
+  if (soft !== null) return [{ meant: clean(soft[1]), isExplicit: false, isStrict: true }]
+
   return []
 }
 
@@ -72,13 +85,18 @@ const isPresent = (prev: Prev, word: string): boolean => {
   return normalize(prev.sent).includes(needle) || normalize(prev.original).includes(needle)
 }
 
-const resolveHeard = (meant: string, prev: Prev, terms: readonly string[]): string | undefined => {
+const resolveHeard = (
+  meant: string,
+  prev: Prev,
+  terms: readonly string[],
+  isStrict: boolean,
+): string | undefined => {
   const tokens = tokenize(prev.sent)
   const found = new Map<string, number>()
   for (let size = 1; size <= MAX_WORDS; size += 1) {
     for (let i = 0; i + size <= tokens.length; i += 1) {
       const span = prev.sent.slice(at(tokens, i).start, at(tokens, i + size - 1).end)
-      if (!isPlausiblePair(span, meant, terms)) continue
+      if (!isPlausiblePair(span, meant, terms, isStrict)) continue
       found.set(span, editDistance(squash(span), squash(meant)))
     }
   }
@@ -135,10 +153,11 @@ export const learnFromPrompt = (prev: Prev | null, current: string, terms: reado
       unlearn.push(undo.heard)
       continue
     }
-    const heard = claim.heard ?? resolveHeard(claim.meant, prev, terms)
+    const isStrict = claim.isStrict === true
+    const heard = claim.heard ?? resolveHeard(claim.meant, prev, terms, isStrict)
     if (heard === undefined) continue
     if (!claim.isExplicit && !isPresent(prev, heard)) continue
-    if (!isPlausiblePair(heard, claim.meant, terms)) continue
+    if (!isPlausiblePair(heard, claim.meant, terms, isStrict)) continue
     learn.push({ heard, meant: claim.meant })
   }
   return { learn, unlearn }
