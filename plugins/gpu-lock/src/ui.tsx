@@ -1,4 +1,4 @@
-import type { Elements, RenderSurface } from 'claude-code'
+import type { Elements, RenderElement, RenderSurface } from 'claude-code'
 
 import type { BandModel, PaneModel, Tone } from './view'
 
@@ -15,6 +15,19 @@ const COLOR: Record<Tone, string | undefined> = {
 const DOT: Record<Tone, string> = { mine: '●', other: '●', waiting: '◐', free: '○', off: '○' }
 
 const ICON_COLOR: Record<string, string | undefined> = { '✓': 'success', '✗': 'error', '⊘': 'warning' }
+
+// The band is one tree, so gpu-lock draws under whatever the plugins beneath it drew.
+export const withBelow = (els: Els, below: RenderElement | null | undefined, mine: RenderElement): RenderElement => {
+  const { Box } = els
+  return below == null ? (
+    mine
+  ) : (
+    <Box flexDirection="column">
+      {below}
+      {mine}
+    </Box>
+  )
+}
 
 export const bandView = (els: Els, m: BandModel) => {
   const { Box, Text } = els

@@ -7,7 +7,7 @@ import type { Io } from '../src/io'
 import { readOptions } from '../src/options'
 import { createRuntime } from '../src/runtime'
 import type { Runtime } from '../src/runtime'
-import { bandView, paneView } from '../src/ui'
+import { bandView, paneView, withBelow } from '../src/ui'
 import { bandModel, paneModel } from '../src/view'
 
 const snapshotAtom = atom({ plugin: 'gpu-lock', key: 'snapshot' } as const, null)
@@ -117,8 +117,10 @@ export const register: Register = (on, options) => {
       session: await $.session.id(),
       width: e.viewport?.columns ?? DEFAULT_COLUMNS,
     })
-    if (model === null) return next(e)
-    return bandView($.ui.resolve(e), model)
+    const below = await next(e)
+    if (model === null) return below
+    const els = $.ui.resolve(e)
+    return withBelow(els, below, bandView(els, model))
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
