@@ -1,9 +1,9 @@
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
-export type Config = { model: string; effort: Effort; timeoutMs: number }
+export type Config = { model: string; effort: Effort; timeoutMs: number; autoAccept: boolean }
 
-const DEFAULT_MODEL = 'sonnet'
-const DEFAULT_EFFORT: Effort = 'low'
+const DEFAULT_MODEL = 'haiku'
+const DEFAULT_EFFORT: Effort = 'high'
 const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 const DEFAULT_SECONDS = 20
 const MIN_SECONDS = 5
@@ -25,5 +25,6 @@ export const readOptions = (o: Readonly<Record<string, unknown>>): Config => {
     model: model === '' ? DEFAULT_MODEL : model,
     effort: effort(o['effort']),
     timeoutMs: seconds(o['timeoutSeconds']) * 1000,
+    autoAccept: o['autoAccept'] === true,
   }
 }

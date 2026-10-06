@@ -3,30 +3,57 @@ import type { Register } from 'claude-code'
 
 import { findChord } from '../src/chord'
 import { diffPairs } from '../src/diff'
-import { MAX_DRAFT, acceptEnhanced, buildRequest } from '../src/enhance'
+import { MAX_DRAFT, acceptEnhanced, buildRequest, refusalReason } from '../src/enhance'
 import { readOptions } from '../src/options'
-import { ACTION, idleView, reviewView, withBelow } from '../src/ui'
-import { reviewModel } from '../src/view'
+import { ACTION, idleView, paneView, reviewView, withBelow } from '../src/ui'
+import { paneRows, reviewModel } from '../src/view'
 
 const reviewAtom = atom({ plugin: 'rescribe', key: 'review' } as const, null)
 
 const BASE_TOKENS = 512
+const PANE_ID = 'rescribe-diff'
 
 export const register: Register = (on, options) => {
   const config = readOptions(options)
   let isBusy = false
+  let isPaneUp = false
   let chord: string | null | undefined
 
   on('prompt.edit', async ($, e, next) => {
     const isTextChange = e.inputText !== '' || e.end > e.start
-    if (isTextChange && (await read($, reviewAtom)) !== null) await update($, reviewAtom, () => null)
+    if (isTextChange && (await read($, reviewAtom)) !== null) {
+      await update($, reviewAtom, () => null)
+      if (isPaneUp) {
+        isPaneUp = false
+        await $.ui.close({ id: PANE_ID })
+      }
+    }
     return next(e)
   }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
-    if ((await read($, reviewAtom)) !== null) await update($, reviewAtom, () => null)
+    if ((await read($, reviewAtom)) !== null) {
+      await update($, reviewAtom, () => null)
+      if (isPaneUp) {
+        isPaneUp = false
+        await $.ui.close({ id: PANE_ID })
+      }
+    }
     return next(e)
   }).catch(($, e, next) => next(e))
+
+  on('ui.close', async ($, e, next) => {
+    if (e.id === PANE_ID && e.origin.kind === 'person' && isPaneUp) {
+      isPaneUp = false
+      await update($, reviewAtom, r => (r === null ? r : { ...r }))
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
+    const review = await read($, reviewAtom)
+    return paneView($.ui.resolve(e), review === null ? null : reviewModel(review))
+  })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
@@ -44,6 +71,18 @@ export const register: Register = (on, options) => {
       } catch {
         chord = null
       }
+    }
+
+    // Opens the diff in a pane; false when the surface cannot place one, and the band shows the diff instead.
+    const showInPane = async (m: ReturnType<typeof reviewModel>): Promise<boolean> => {
+      try {
+        const opened = await $.ui.open({ id: PANE_ID, title: 'Enhance Prompt', rows: paneRows(m.rows) })
+        if (opened.isPlaced) return true
+        await $.ui.close({ id: PANE_ID })
+      } catch {
+        return false
+      }
+      return false
     }
 
     const enhance = async () => {
@@ -72,10 +111,23 @@ export const register: Register = (on, options) => {
         })
         const enhanced = reply.isAnswered ? acceptEnhanced(text, reply.text) : null
 
-        if (enhanced === null) $.ui.toast('rescribe: could not enhance this prompt')
-        else if (enhanced === text.trim()) $.ui.toast('rescribe: nothing to improve')
+        if (enhanced === null) {
+          const why = reply.isAnswered
+            ? refusalReason(text, reply.text)
+            : `the model did not answer (${reply.reason})`
+          $.ui.toast(`rescribe: could not enhance this prompt: ${why}`)
+        } else if (enhanced === text.trim()) $.ui.toast('rescribe: nothing to improve')
         else if ((await $.prompt.read()).text !== text) $.ui.toast('rescribe: the draft changed, so nothing was applied')
-        else await update($, reviewAtom, () => ({ original: text, fixed: enhanced, pairs: diffPairs(text, enhanced) }))
+        else {
+          const review = { original: text, fixed: enhanced, pairs: diffPairs(text, enhanced) }
+          if (config.autoAccept && (await $.prompt.fill({ text: enhanced })).isFilled) {
+            $.ui.toast('rescribe: applied')
+            return
+          }
+          if (config.autoAccept) $.ui.toast('rescribe: the prompt box is busy, so the text could not be put in it')
+          isPaneUp = await showInPane(reviewModel(review))
+          await update($, reviewAtom, () => review)
+        }
       } catch {
         $.ui.toast('rescribe: could not enhance this prompt')
       } finally {
@@ -90,6 +142,10 @@ export const register: Register = (on, options) => {
     const take = async (): Promise<boolean> => {
       if ((await read($, reviewAtom)) === null) return false
       await update($, reviewAtom, () => null)
+      if (isPaneUp) {
+        isPaneUp = false
+        await $.ui.close({ id: PANE_ID })
+      }
       return true
     }
 
@@ -109,6 +165,6 @@ export const register: Register = (on, options) => {
       await take()
     }
 
-    return withBelow(els, below, reviewView(els, model, { onApply: apply, onDismiss: dismiss }, chord))
+    return withBelow(els, below, reviewView(els, model, { onApply: apply, onDismiss: dismiss }, chord, !isPaneUp))
   })
 }

@@ -8,13 +8,19 @@
       "type": "string",
       "title": "Model",
       "description": "The model that rewrites your draft: haiku, sonnet, opus or a full model id.",
-      "default": "sonnet"
+      "default": "haiku"
     },
     "effort": {
       "type": "string",
       "title": "Effort",
       "description": "How hard the model thinks: low, medium, high, xhigh or max.",
-      "default": "low"
+      "default": "high"
+    },
+    "autoAccept": {
+      "type": "boolean",
+      "title": "Auto accept",
+      "description": "Put the enhanced text in the prompt box right away instead of opening the menu.",
+      "default": false
     },
     "timeoutSeconds": {
       "type": "number",

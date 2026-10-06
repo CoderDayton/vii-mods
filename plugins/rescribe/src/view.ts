@@ -87,6 +87,18 @@ const contextRows = (lines: readonly string[], hasPrev: boolean, hasNext: boolea
   ]
 }
 
+const WRAP_COLUMNS = 100
+
+// The rows a pane needs to show `rows` whole: one per line, one more per WRAP_COLUMNS characters of a long one.
+export const paneRows = (rows: readonly Row[]): number =>
+  Math.max(
+    1,
+    rows.reduce((sum, row) => {
+      const length = row.segs.reduce((n, seg) => n + seg.text.length, 0)
+      return sum + Math.max(1, Math.ceil(length / WRAP_COLUMNS))
+    }, 0),
+  )
+
 export const reviewModel = (review: Review): ReviewModel => {
   const original = review.original.trim()
   const fixed = review.fixed.trim()
