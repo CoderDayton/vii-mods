@@ -1,6 +1,0 @@
-{
-  "name": "prompt-repair",
-  "version": "0.2.0",
-  "description": "Fixes your prompt before it is sent: misheard or wrong words, typos and self-corrections. Shows the fix for you to accept, edit or skip, or applies it automatically.",
-  "types": "./types/index.d.ts"
-}

@@ -4,12 +4,11 @@ export type Review = {
   original: string
   fixed: string
   pairs: Pair[]
-  learn: Pair[]
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    'prompt-repair': {
+    rescribe: {
       review: Review | null
     }
   }

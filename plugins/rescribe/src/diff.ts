@@ -1,4 +1,4 @@
-import type { Pair } from './types'
+import type { Pair } from '../types'
 import { at, tokenize } from './text'
 import type { Token } from './text'
 
@@ -50,9 +50,6 @@ export const diffPairs = (before: string, after: string): Pair[] => {
 
 export type Seg = { text: string; isChanged: boolean }
 
-const CONTEXT_BEFORE = 24
-const ELLIPSIS = '…'
-
 const segments = (src: string, toks: readonly Token[], spans: readonly [number, number][]): Seg[] => {
   const out: Seg[] = []
   const push = (text: string, isChanged: boolean) => {
@@ -77,30 +74,3 @@ export const markChanges = (before: string, after: string): { before: Seg[]; aft
   return { before: segments(before, a, aSpans), after: segments(after, b, bSpans) }
 }
 
-export const windowSegments = (segs: readonly Seg[], max: number): Seg[] => {
-  const total = segs.reduce((n, s) => n + s.text.length, 0)
-  if (total <= max) return [...segs]
-
-  let firstAt = 0
-  let pos = 0
-  for (const s of segs) {
-    if (s.isChanged) {
-      firstAt = pos
-      break
-    }
-    pos += s.text.length
-  }
-  const end = Math.min(total, Math.max(0, firstAt - CONTEXT_BEFORE) + max)
-  const start = Math.max(0, end - max)
-
-  const out: Seg[] = start > 0 ? [{ text: ELLIPSIS, isChanged: false }] : []
-  pos = 0
-  for (const s of segs) {
-    const from = Math.max(start, pos)
-    const to = Math.min(end, pos + s.text.length)
-    if (from < to) out.push({ text: s.text.slice(from - pos, to - pos), isChanged: s.isChanged })
-    pos += s.text.length
-  }
-  if (end < total) out.push({ text: ELLIPSIS, isChanged: false })
-  return out
-}

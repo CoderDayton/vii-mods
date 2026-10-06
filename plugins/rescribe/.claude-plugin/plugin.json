@@ -1,0 +1,28 @@
+{
+  "name": "rescribe",
+  "version": "0.1.0",
+  "description": "Prompt enhancer: a shortcut rewrites the draft in the prompt box, and a menu shows the change to apply or dismiss.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "model": {
+      "type": "string",
+      "title": "Model",
+      "description": "The model that rewrites your draft: haiku, sonnet, opus or a full model id.",
+      "default": "sonnet"
+    },
+    "effort": {
+      "type": "string",
+      "title": "Effort",
+      "description": "How hard the model thinks: low, medium, high, xhigh or max.",
+      "default": "low"
+    },
+    "timeoutSeconds": {
+      "type": "number",
+      "title": "Timeout (seconds)",
+      "description": "How long to wait for the model before giving up.",
+      "default": 20,
+      "min": 5,
+      "max": 120
+    }
+  }
+}
