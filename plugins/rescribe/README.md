@@ -15,7 +15,7 @@ Bind a chord to the action `app:toggleDiffNoiseFilter` in `~/.claude/keybindings
 }
 ```
 
-A mod cannot add its own action name; Claude Code ignores unknown ones. rescribe's buttons name this built-in action instead. It is unbound by default and does nothing outside the old diff panel, so the chord presses rescribe's button and nothing else. The binding must be a chord or a modified key. Without it, click the `✎ Enhance Prompt` row above the prompt.
+A mod cannot add its own action name; Claude Code ignores unknown ones. rescribe's buttons name this built-in action instead. It is unbound by default and does nothing outside the old diff panel, so the chord presses rescribe's button and nothing else. The binding must be a chord or a modified key. Without it, nothing opens the menu, because the idle button has no visible row to click.
 
 ## Use
 
@@ -41,7 +41,7 @@ The menu and the pane close when you edit the text or send. If you close the pan
 
 A draft that is empty or over 10,000 characters is not sent. A reply is refused, and the draft kept, when it has no `<enhanced>` tags, is over 2.5 times the draft plus 80 characters, shares under 30% of the draft's words (so it answered the draft instead of rewriting it), or loses an `[Image #N]` tag, `@file` mention, code span, URL or path. The toast names the reason. Editing the draft while the model works discards the result.
 
-When idle, the band above the prompt is one dim `✎ Enhance Prompt` row. It steps aside for a survey and cannot be hidden: a button that is not laid out is not mounted, so the shortcut stops working. It draws under the plugins beneath it, as `gpu-lock` does. A plugin above it that skips `next` hides it.
+When idle, the band above the prompt draws nothing. The shortcut only works while its button is mounted, so the button sits in a box with no height. The band steps aside for a survey, and draws under the plugins beneath it, as `gpu-lock` does. A plugin above it that skips `next` unmounts the button, and the shortcut stops working.
 
 ## Settings
 
@@ -54,10 +54,10 @@ In `/plugin`, or under `pluginConfigs` in your settings:
 
 ## Files
 
-- `hooks/register.tsx`: the `ui.render` hooks (the idle row, the menu, the diff pane and the model call), and the `prompt.edit`, `prompt.submit` and `ui.close` hooks that keep them in step.
+- `hooks/register.tsx`: the `ui.render` hooks (the idle button, the menu, the diff pane and the model call), and the `prompt.edit`, `prompt.submit` and `ui.close` hooks that keep them in step.
 - `src/enhance.ts`: the instructions sent to the model and the checks on its reply.
 - `src/options.ts`: the settings.
-- `src/ui.tsx`: the idle row, the menu and the diff pane, and the action name.
+- `src/ui.tsx`: the idle button, the menu and the diff pane, and the action name.
 - `src/view.ts`: the diff rows: line diff, context and folds.
 - `src/diff.ts`: the word diff behind the marks and the change count.
 - `src/chord.ts`: finds your shortcut in `keybindings.json`.

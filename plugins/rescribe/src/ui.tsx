@@ -66,12 +66,12 @@ export const withBelow = (els: Els, below: RenderElement | null | undefined, min
   )
 }
 
-export const idleView = (els: Els, onEnhance: () => void, chord: string | null) => {
-  const { Box, Text, Button } = els
+// The shortcut works only while its button is mounted, so the button stays, in a box that takes no rows.
+export const idleView = (els: Els, onEnhance: () => void) => {
+  const { Box, Button } = els
   return (
-    <Box>
+    <Box height={0} overflow="hidden">
       <Button key="enhance" label="✎ Enhance Prompt" action={ACTION} plain dimColor onPress={onEnhance} />
-      {chord !== null && <Text dimColor>{`  ${chord}`}</Text>}
     </Box>
   )
 }

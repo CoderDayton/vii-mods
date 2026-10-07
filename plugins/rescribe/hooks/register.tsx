@@ -135,7 +135,7 @@ export const register: Register = (on, options) => {
       }
     }
 
-    if (review === null) return withBelow(els, below, idleView(els, enhance, chord))
+    if (review === null) return withBelow(els, below, idleView(els, enhance))
 
     const model = reviewModel(review)
 
