@@ -1,0 +1,39 @@
+pre-commit:
+  jobs:
+    - name: marketplace
+      glob: ".claude-plugin/marketplace.json"
+      run: claude plugin validate .
+
+    - name: plugins
+      glob: "plugins/**"
+      run: |
+        set -e
+        for dir in $(git diff --cached --name-only --diff-filter=ACMR -- plugins | cut -d/ -f1-2 | sort -u); do
+          if [ -f "$dir/.claude-plugin/plugin.json" ]; then
+            claude plugin validate "$dir"
+            if [ -d "$dir/tests" ]; then
+              claude plugin test "$dir"
+            fi
+          fi
+        done
+
+commit-msg:
+  jobs:
+    - name: subject
+      run: |
+        subject=$(head -n 1 {1})
+        case "$subject" in
+          Merge\ *|Revert\ *) exit 0 ;;
+        esac
+        if ! printf '%s\n' "$subject" | grep -Eq '^(feat|fix|update|refactor|perf|docs|test|chore)(\([a-z0-9-]+\))?: .+'; then
+          echo "Subject must look like: type(scope): summary"
+          echo "Types: feat, fix, update, refactor, perf, docs, test, chore"
+          exit 1
+        fi
+
+    - name: trailers
+      run: |
+        if grep -Eiq '^(Co-Authored-By|Claude-Session|Assisted-by):' {1}; then
+          echo "Remove the attribution trailer from the commit message."
+          exit 1
+        fi
