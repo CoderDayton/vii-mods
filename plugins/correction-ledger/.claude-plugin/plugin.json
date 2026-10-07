@@ -1,0 +1,29 @@
+{
+  "name": "correction-ledger",
+  "version": "0.1.0",
+  "description": "Saves each correction you make as a standing rule, feeds the rules back every turn, and makes a rule louder each time it is broken.",
+  "userConfig": {
+    "model": {
+      "type": "string",
+      "title": "Model",
+      "description": "The model that decides whether a prompt is a correction: haiku, sonnet, opus or a full model id.",
+      "default": "haiku"
+    },
+    "maxRules": {
+      "type": "number",
+      "title": "Rules kept per folder",
+      "description": "How many rules a folder keeps. Past this, the rule broken least often and unused longest goes.",
+      "default": 12,
+      "min": 3,
+      "max": 30
+    },
+    "timeoutSeconds": {
+      "type": "number",
+      "title": "Timeout (seconds)",
+      "description": "How long to wait for the model before dropping a check.",
+      "default": 15,
+      "min": 5,
+      "max": 60
+    }
+  }
+}

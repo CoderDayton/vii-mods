@@ -14,6 +14,12 @@
       "source": "./plugins/gpu-lock",
       "description": "One CUDA job at a time: GPU commands run under a lock and are checked against free GPU memory first.",
       "category": "tools"
+    },
+    {
+      "name": "correction-ledger",
+      "source": "./plugins/correction-ledger",
+      "description": "Saves each correction you make as a standing rule, feeds the rules back every turn, and makes a rule louder each time it is broken.",
+      "category": "prompt"
     }
   ]
 }
