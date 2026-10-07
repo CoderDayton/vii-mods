@@ -4,7 +4,11 @@ export const DEFAULT_LOCK_PATH = '/tmp/gpu-lock/lock'
 
 export type Band = 'auto' | 'always' | 'never'
 
+export type Mode = 'exclusive' | 'shared'
+
 export type Config = {
+  mode: Mode
+  maxVramPercent: number
   waitSeconds: number
   minFreeMiB: number
   band: Band
@@ -29,6 +33,8 @@ export const readOptions = (o: Readonly<Record<string, unknown>>): Config => {
   const skip = compilePatterns(lines(o['skipPatterns']))
   const band = o['band']
   return {
+    mode: o['mode'] === 'shared' ? 'shared' : 'exclusive',
+    maxVramPercent: whole(o['maxVramPercent'], 10, 100, 75),
     waitSeconds: whole(o['waitSeconds'], 0, 600, 0),
     minFreeMiB: whole(o['minFreeMiB'], 0, 1048576, 1024),
     band: band === 'always' || band === 'never' ? band : 'auto',

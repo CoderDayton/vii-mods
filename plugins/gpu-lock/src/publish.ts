@@ -1,4 +1,4 @@
-import type { Snapshot } from '../types'
+import type { Holder, Snapshot } from '../types'
 import { duration } from './format'
 import type { Io } from './io'
 import { isMine } from './messages'
@@ -33,11 +33,16 @@ const showStatus = async (io: Io, config: Config, memo: Memo, snap: Snapshot, se
   io.ui.status(text)
 }
 
+const holdersOf = (lock: Snapshot['lock']): Holder[] => {
+  if (lock.kind === 'held') return lock.holder === null ? [] : [lock.holder]
+  return lock.kind === 'shared' ? lock.holders : []
+}
+
 const watchBackground = (io: Io, memo: Memo, snap: Snapshot, session: string) => {
   if (memo.backgroundSince === null || snap.lock.kind !== 'free') return
-  const was = memo.previous?.lock
-  if (was !== undefined && was.kind === 'held' && was.holder !== null && isMine(was.holder, session)) {
-    io.ui.toast(`GPU free again after ${duration(snap.at - was.holder.since)}`)
+  const mine = holdersOf(memo.previous?.lock ?? { kind: 'free' }).find(h => isMine(h, session))
+  if (mine !== undefined) {
+    io.ui.toast(`GPU free again after ${duration(snap.at - mine.since)}`)
     memo.backgroundSince = null
   } else if (snap.at - memo.backgroundSince > BACKGROUND_GRACE_MS) {
     memo.backgroundSince = null
@@ -46,11 +51,9 @@ const watchBackground = (io: Io, memo: Memo, snap: Snapshot, session: string) =>
 
 const releaseWait = async (io: Io, snap: Snapshot, session: string) => {
   const waiting = await io.state.waiting.get()
-  if (waiting === null || snap.lock.kind !== 'held') return
-  const holder = snap.lock.holder
-  if (holder !== null && isMine(holder, session) && holder.since >= waiting.since - WAIT_SLACK_MS) {
-    await io.state.waiting.set(() => null)
-  }
+  if (waiting === null) return
+  const started = holdersOf(snap.lock).some(h => isMine(h, session) && h.since >= waiting.since - WAIT_SLACK_MS)
+  if (started) await io.state.waiting.set(() => null)
 }
 
 export const publishSnapshot = async (io: Io, config: Config, memo: Memo, snap: Snapshot) => {

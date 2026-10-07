@@ -5,15 +5,25 @@ const APP_NAME_CHARS = 40
 
 export const SMI_GPUS = [
   'nvidia-smi',
-  '--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu',
+  '--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu,uuid',
   '--format=csv,noheader,nounits',
 ] as const
 
 export const SMI_APPS = [
   'nvidia-smi',
-  '--query-compute-apps=pid,process_name,used_gpu_memory',
+  '--query-compute-apps=pid,process_name,used_gpu_memory,gpu_uuid',
   '--format=csv,noheader,nounits',
 ] as const
+
+const UUID = /^(GPU|MIG)-\S+$/
+
+// The uuid is the last field when the driver reports it; an older fixture or driver may not.
+const withoutUuid = (parts: string[]): { fields: string[]; uuid: string | undefined } => {
+  const last = parts[parts.length - 1]
+  return last !== undefined && UUID.test(last)
+    ? { fields: parts.slice(0, -1), uuid: clean(last, 80) }
+    : { fields: parts, uuid: undefined }
+}
 
 const num = (field: string | undefined): number | null => {
   const n = Number((field ?? '').trim())
@@ -29,7 +39,8 @@ const lines = (text: string): string[][] =>
 
 export const parseGpus = (text: string): Gpu[] => {
   const gpus: Gpu[] = []
-  for (const parts of lines(text)) {
+  for (const line of lines(text)) {
+    const { fields: parts, uuid } = withoutUuid(line)
     if (parts.length < 6) continue
     const index = num(parts[0])
     const usedMiB = num(parts[parts.length - 4])
@@ -42,6 +53,7 @@ export const parseGpus = (text: string): Gpu[] => {
       totalMiB,
       util: num(parts[parts.length - 2]),
       tempC: num(parts[parts.length - 1]),
+      ...(uuid === undefined ? {} : { uuid }),
     })
   }
   return gpus
@@ -54,7 +66,8 @@ const programName = (raw: string): string => {
 
 export const parseApps = (text: string): App[] => {
   const apps: App[] = []
-  for (const parts of lines(text)) {
+  for (const line of lines(text)) {
+    const { fields: parts, uuid } = withoutUuid(line)
     if (parts.length < 3) continue
     const pid = num(parts[0])
     if (pid === null) continue
@@ -62,6 +75,7 @@ export const parseApps = (text: string): App[] => {
       pid,
       name: programName(parts.slice(1, parts.length - 1).join(', ')),
       usedMiB: num(parts[parts.length - 1]) ?? 0,
+      ...(uuid === undefined ? {} : { gpu: uuid }),
     })
   }
   return apps

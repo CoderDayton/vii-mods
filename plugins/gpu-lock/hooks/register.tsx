@@ -5,22 +5,36 @@ import { runCommand } from '../src/commands'
 import { createGuard } from '../src/guard'
 import type { Io } from '../src/io'
 import { readOptions } from '../src/options'
+import type { Mode } from '../src/options'
 import { createRuntime } from '../src/runtime'
 import type { Runtime } from '../src/runtime'
+import type { Charts } from '../src/history'
 import { bandView, paneView, withBelow } from '../src/ui'
 import { bandModel, paneModel } from '../src/view'
 
 const snapshotAtom = atom({ plugin: 'gpu-lock', key: 'snapshot' } as const, null)
 const logAtom = atom({ plugin: 'gpu-lock', key: 'log' } as const, [])
 const waitingAtom = atom({ plugin: 'gpu-lock', key: 'waiting' } as const, null)
+const historyAtom = atom({ plugin: 'gpu-lock', key: 'history' } as const, [])
 const enabledAtom = atom({ plugin: 'gpu-lock', key: 'enabled' } as const, true)
 
 const PANE_ID = 'gpu-lock'
 const DEFAULT_COLUMNS = 100
 const PANE_CHROME_ROWS = 6
+// Pane padding on both sides, the percent labels and the space after them.
+const CHART_SIDE_COLUMNS = 7
 
-const RULES =
-  'GPU lock (gpu-lock plugin): this machine runs one CUDA job at a time. A Bash command that uses the GPU is run under a lock and checked against free GPU memory first. If it is refused, wait for the running job to end; do not start a second one. To say how much GPU memory a command needs, end it with `# gpu 8g`. To mark a command that does not use the GPU, end it with `# nogpu`.'
+// Rows the charts take: each card's title, rows and summary, the axis, the legend, and the gap above.
+const chartHeight = (charts: Charts | null): number =>
+  charts === null ? 0 : charts.cards.reduce((n, c) => n + c.rows.length + 2, 0) + 1 + charts.legend.length + 1
+
+const TAIL =
+  'To say how much GPU memory a command needs, end it with `# gpu 8g`. To mark a command that does not use the GPU, end it with `# nogpu`.'
+
+const rulesFor = (mode: Mode, percent: number): string =>
+  mode === 'shared'
+    ? `GPU lock (gpu-lock plugin): this machine shares the GPU between CUDA jobs, up to ${percent}% of its memory together. A Bash command that uses the GPU is checked against that limit first. If it is refused, wait for a running job to end, then try again; do not work around the limit. ${TAIL}`
+    : `GPU lock (gpu-lock plugin): this machine runs one CUDA job at a time. A Bash command that uses the GPU is run under a lock and checked against free GPU memory first. If it is refused, wait for the running job to end; do not start a second one. ${TAIL}`
 
 let io: Io | null = null
 let rt: Runtime | null = null
@@ -37,6 +51,7 @@ const startHook: Hook<'session.start'> = async ($, e, next) => {
         snapshot: { get: () => read($, snapshotAtom), set: async fn => void (await update($, snapshotAtom, fn)) },
         log: { get: () => read($, logAtom), set: async fn => void (await update($, logAtom, fn)) },
         waiting: { get: () => read($, waitingAtom), set: async fn => void (await update($, waitingAtom, fn)) },
+        history: { get: () => read($, historyAtom), set: async fn => void (await update($, historyAtom, fn)) },
         enabled: { get: () => read($, enabledAtom), set: async fn => void (await update($, enabledAtom, fn)) },
       },
     }
@@ -81,7 +96,8 @@ export const register: Register = (on, options) => {
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
     if (!(await read($, enabledAtom))) return composed
-    return { sections: [...composed.sections, { id: 'gpu-lock:rules', text: RULES, scope: 'session' }] }
+    const text = rulesFor(config.mode, config.maxVramPercent)
+    return { sections: [...composed.sections, { id: 'gpu-lock:rules', text, scope: 'session' }] }
   })
 
   on('command.run', { command: 'gpu' }, async ($, e) => {
@@ -133,8 +149,11 @@ export const register: Register = (on, options) => {
       bad: config.bad,
       now: await $.clock.now(),
       session: await $.session.id(),
+      maxPercent: config.mode === 'shared' ? config.maxVramPercent : null,
+      history: await read($, historyAtom),
+      columns: (e.props.bodyColumns ?? e.viewport?.columns ?? DEFAULT_COLUMNS) - CHART_SIDE_COLUMNS,
     })
-    const room = Math.max(1, (e.viewport?.rows ?? 24) - PANE_CHROME_ROWS)
+    const room = Math.max(1, (e.viewport?.rows ?? 24) - PANE_CHROME_ROWS - chartHeight(model.chart))
     return paneView($.ui.resolve(e), { ...model, log: model.log.slice(0, room) }, {
       onRefresh: () => {
         if (io !== null) void runtime.refresh(io)

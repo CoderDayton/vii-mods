@@ -1,4 +1,4 @@
-import type { Entry, Snapshot, Waiting } from '../types'
+import type { Entry, Sample, Snapshot, Waiting } from '../types'
 
 export type Cell<T> = {
   get: () => Promise<T>
@@ -36,6 +36,7 @@ export type Io = {
     snapshot: Cell<Snapshot | null>
     log: Cell<Entry[]>
     waiting: Cell<Waiting | null>
+    history: Cell<Sample[]>
     enabled: Cell<boolean>
   }
 }

@@ -1,10 +1,14 @@
 import type { Entry, Snapshot } from '../types'
+import { appendSample, readSamples } from './histfile'
+import { MIN_GAP_MS, needsTree, sampleOf } from './history'
 import type { Io } from './io'
 import type { Config } from './options'
 import { newMemo, publishSnapshot } from './publish'
+import { PS_ARGV, parseParents } from './procs'
 import { ensureLock, takeSnapshot } from './sys'
 
 const POLL_MS = 3000
+const PS_TIMEOUT_MS = 3000
 const MAX_LOG = 20
 
 export type Runtime = {
@@ -34,11 +38,36 @@ export const createRuntime = (config: Config): Runtime => {
     await io.state.log.set(list => [...list, entry].slice(-MAX_LOG))
   }
 
+  const readParents = async (io: Io): Promise<Map<number, number> | null> => {
+    try {
+      const r = await io.process.run(PS_ARGV, { timeoutMs: PS_TIMEOUT_MS })
+      return r.exitCode === 0 ? parseParents(r.stdout) : null
+    } catch {
+      return null
+    }
+  }
+
+  // The file every session shares is the history: add this reading when the newest is old enough, then read it all.
+  const trackHistory = async (io: Io, snap: Snapshot) => {
+    try {
+      const samples = await readSamples(io, config.lockPath, snap.at)
+      const newest = samples[samples.length - 1]?.at ?? 0
+      if (snap.at - newest >= MIN_GAP_MS) {
+        const sample = sampleOf(snap, needsTree(snap) ? await readParents(io) : null)
+        if (sample !== null && (await appendSample(io, config.lockPath, sample))) samples.push(sample)
+      }
+      await io.state.history.set(() => samples)
+    } catch {
+      return
+    }
+  }
+
   const refresh = async (io: Io): Promise<Snapshot> => {
     const now = await io.clock.now()
     if (fault !== null) fault = await ensureLock(io, config.lockPath)
     const raw = await takeSnapshot(io, config.lockPath, now)
     const snap: Snapshot = fault === null ? raw : { ...raw, lock: { kind: 'unavailable', reason: fault } }
+    await trackHistory(io, snap)
     await publish(io, snap)
     return snap
   }

@@ -1,7 +1,8 @@
 import type { Reading, Snapshot } from '../types'
 import { classify } from './classify'
 import { gib } from './format'
-import { describeHolder } from './messages'
+import { waitersOf } from './lock'
+import { describeHolder, describeHolders } from './messages'
 import type { Config } from './options'
 
 export type Context = {
@@ -52,7 +53,20 @@ const gpuLines = (gpu: Reading): string[] => {
 const lockLine = (s: Snapshot, c: Context): string => {
   if (s.lock.kind === 'free') return 'Lock: free.'
   if (s.lock.kind === 'unavailable') return `Lock: unavailable (${s.lock.reason}).`
+  if (s.lock.kind === 'shared') {
+    return `Lock: shared by ${describeHolders(s.lock.holders, c.now, c.session)}.`
+  }
   return `Lock: held by ${describeHolder(s.lock.holder, c.now, c.session)}.`
+}
+
+const queueLine = (s: Snapshot, c: Context): string => {
+  const waiters = waitersOf(s)
+  return waiters.length === 0 ? '' : `Waiting: ${describeHolders(waiters, c.now, c.session)}.`
+}
+
+const rulesLine = (config: Config): string => {
+  const mode = config.mode === 'shared' ? `shared up to ${config.maxVramPercent}% of memory` : 'one job at a time'
+  return `Rules: ${mode}, wait ${config.waitSeconds}s, least free ${gib(config.minFreeMiB)}, band ${config.band}, lock file ${config.lockPath}.`
 }
 
 const status = (c: Context): string => {
@@ -61,11 +75,9 @@ const status = (c: Context): string => {
   if (snapshot === null) {
     lines.push('Lock: not read yet.')
   } else {
-    lines.push(lockLine(snapshot, c), ...gpuLines(snapshot.gpu), apps(snapshot.gpu))
+    lines.push(lockLine(snapshot, c), queueLine(snapshot, c), ...gpuLines(snapshot.gpu), apps(snapshot.gpu))
   }
-  lines.push(
-    `Rules: wait ${config.waitSeconds}s, least free ${gib(config.minFreeMiB)}, band ${config.band}, lock file ${config.lockPath}.`,
-  )
+  lines.push(rulesLine(config))
   if (config.bad.length > 0) lines.push(`Ignored patterns (not valid): ${config.bad.join(', ')}`)
   return lines.filter(l => l !== '').join('\n')
 }

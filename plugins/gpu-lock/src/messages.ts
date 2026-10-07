@@ -33,19 +33,44 @@ export const describeHolder = (holder: Holder | null, now: number, session: stri
   return `${who}${agent}: ${cmd} (${duration(now - holder.since)})`
 }
 
-export const refusedBusy = (holder: Holder | null, now: number, session: string, reading: Reading): string => {
-  const advice = isMine(holder, session)
+export const describeHolders = (holders: readonly Holder[], now: number, session: string): string =>
+  holders.length === 0 ? 'an unknown process' : holders.map(h => describeHolder(h, now, session)).join('; ')
+
+export const refusedBusy = (holders: readonly Holder[], now: number, session: string, reading: Reading): string => {
+  const advice = holders.some(h => isMine(h, session))
     ? 'Wait for that job to finish (a background command: read its output until it ends), then run this command again. Do not start a second GPU job.'
     : 'Another job holds the GPU. Wait and retry, or ask the user. Do not start a second GPU job.'
   return [
     'gpu-lock: the GPU is locked, so this command did not run.',
-    `Held by ${describeHolder(holder, now, session)}.`,
+    `Held by ${describeHolders(holders, now, session)}.`,
     memoryLine(reading),
     advice,
   ]
     .filter(l => l !== '')
     .join('\n')
 }
+
+export const refusedQueue = (waiters: readonly Holder[], now: number, session: string): string =>
+  [
+    'gpu-lock: other jobs are waiting for the GPU ahead of this command, so it did not run.',
+    `Waiting, in order: ${waiters.map((h, i) => `${i + 1}. ${describeHolder(h, now, session)}`).join('; ')}.`,
+    'Wait for them to start, then run this command again, or ask the user. Do not skip the line.',
+  ].join('\n')
+
+export const refusedShare = (
+  d: { needMiB: number; usedMiB: number; capMiB: number; totalMiB: number; percent: number },
+  holders: readonly Holder[],
+  now: number,
+  session: string,
+): string =>
+  [
+    'gpu-lock: shared GPU memory is at its limit, so this command did not run.',
+    `It needs about ${gib(d.needMiB)}; ${gib(d.usedMiB)} of ${gib(d.totalMiB)} are in use, and jobs may use ${d.percent}% (${gib(d.capMiB)}) together.`,
+    holders.length === 0 ? '' : `Running: ${describeHolders(holders, now, session)}.`,
+    'Wait for a job to end, then run this command again, or lower the need by ending the command with `# gpu 4g`. Do not work around the limit.',
+  ]
+    .filter(l => l !== '')
+    .join('\n')
 
 export const refusedMemory = (needMiB: number, freeMiB: number, totalMiB: number, reading: Reading): string => {
   const users = usedBy(reading)
@@ -64,19 +89,19 @@ export const acquiredNote = (a: {
   totalMiB: number | null
   reading: Reading
   background: boolean
+  sharedPercent?: number
 }): string => {
+  const where = a.sharedPercent === undefined ? 'under the GPU lock' : `in shared GPU mode (limit ${a.sharedPercent}% of memory)`
   const head =
     a.freeMiB !== null && a.totalMiB !== null
-      ? `gpu-lock: this command ran under the GPU lock. ${ratio(a.freeMiB, a.totalMiB)} free at start.`
-      : 'gpu-lock: this command ran under the GPU lock; free memory unknown at start.'
+      ? `gpu-lock: this command ran ${where}. ${ratio(a.freeMiB, a.totalMiB)} free at start.`
+      : `gpu-lock: this command ran ${where}; free memory unknown at start.`
   const users = usedBy(a.reading)
-  return [
-    head,
-    users === '' ? '' : `Other GPU users: ${users}.`,
-    a.background
+  const hold =
+    a.sharedPercent === undefined
       ? 'It is a background command: the lock is held until it exits. Do not start another GPU job before then.'
-      : '',
-  ]
+      : 'It is a background command: its share of the GPU is held until it exits. Count it against the limit before starting another GPU job.'
+  return [head, users === '' ? '' : `Other GPU users: ${users}.`, a.background ? hold : '']
     .filter(l => l !== '')
     .join('\n')
 }

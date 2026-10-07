@@ -1,9 +1,24 @@
 {
   "name": "gpu-lock",
   "version": "0.1.0",
-  "description": "One CUDA job at a time: locks the GPU across sessions, checks free memory first, and shows who holds it.",
+  "description": "One CUDA job at a time, or shared up to a memory limit: locks the GPU across sessions, checks free memory first, and shows who runs and who waits.",
   "types": "./types/index.d.ts",
   "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "GPU mode",
+      "description": "exclusive runs one GPU job at a time. shared lets several run together while their memory stays under the limit below.",
+      "options": ["exclusive", "shared"],
+      "default": "exclusive"
+    },
+    "maxVramPercent": {
+      "type": "number",
+      "title": "Shared memory limit (%)",
+      "description": "In shared mode, GPU jobs together may use this share of the card's memory. The first job on an idle card only has to fit in the free memory.",
+      "default": 75,
+      "min": 10,
+      "max": 100
+    },
     "waitSeconds": {
       "type": "number",
       "title": "Wait for the lock (seconds)",

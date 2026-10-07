@@ -1,7 +1,7 @@
-import type { LockState, Reading, Snapshot } from '../types'
+import type { Holder, LockState, Reading, Snapshot } from '../types'
 import { clean } from './format'
 import { SMI_APPS, SMI_GPUS, parseApps, parseGpus } from './gpu'
-import { ensureArgv, ensureReason, lockState, ownerPathOf, parseHolder, probeArgv } from './lock'
+import { ensureArgv, ensureReason, lockState, ownerPathOf, parseHolder, parseListing, probeArgv } from './lock'
 
 export type Sys = {
   process: {
@@ -36,14 +36,20 @@ const pidAlive = async (sys: Sys, pid: number): Promise<boolean> => {
   }
 }
 
-export const readLock = async (sys: Sys, lockPath: string): Promise<LockState> => {
-  let code: number
+export type Locking = { lock: LockState; waiters: Holder[] }
+
+const SHARED_EXIT = 4
+
+export const readLock = async (sys: Sys, lockPath: string): Promise<Locking> => {
+  let probe: { exitCode: number; stdout: string }
   try {
-    code = (await sys.process.run(probeArgv(lockPath), { timeoutMs: TIMEOUT_MS })).exitCode
+    probe = await sys.process.run(probeArgv(lockPath), { timeoutMs: TIMEOUT_MS })
   } catch {
-    return { kind: 'unavailable', reason: 'the lock probe could not run' }
+    return { lock: { kind: 'unavailable', reason: 'the lock probe could not run' }, waiters: [] }
   }
-  if (code !== 0) return lockState(code, null, true)
+  const { jobs, waiters } = parseListing(probe.stdout)
+  if (probe.exitCode === SHARED_EXIT) return { lock: { kind: 'shared', holders: jobs }, waiters }
+  if (probe.exitCode !== 0) return { lock: lockState(probe.exitCode, null, true), waiters }
   let text: string | null = null
   try {
     text = await sys.fs.read(ownerPathOf(lockPath))
@@ -52,7 +58,7 @@ export const readLock = async (sys: Sys, lockPath: string): Promise<LockState> =
   }
   const holder = text === null ? null : parseHolder(text)
   const alive = holder === null ? true : await pidAlive(sys, holder.pid)
-  return lockState(0, text, alive)
+  return { lock: lockState(0, text, alive), waiters }
 }
 
 const query = async (sys: Sys, argv: readonly string[]): Promise<{ exitCode: number; text: string } | null> => {
@@ -78,6 +84,6 @@ export const readGpu = async (sys: Sys): Promise<Reading> => {
 }
 
 export const takeSnapshot = async (sys: Sys, lockPath: string, now: number): Promise<Snapshot> => {
-  const [lock, gpu] = await Promise.all([readLock(sys, lockPath), readGpu(sys)])
-  return { at: now, lock, gpu }
+  const [locking, gpu] = await Promise.all([readLock(sys, lockPath), readGpu(sys)])
+  return { at: now, lock: locking.lock, gpu, waiters: locking.waiters }
 }
