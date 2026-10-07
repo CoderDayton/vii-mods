@@ -2,12 +2,13 @@ import type { Hook, ModelCompleteResult, PromptOrigin, Register } from 'claude-c
 
 import { applyVerdict } from '../src/apply'
 import { runRules } from '../src/commands'
+import { DIR_ARGV, isPaused, pauseArgv, readLedger, updateLedger } from '../src/disk'
+import type { Disk } from '../src/disk'
 import { mightCorrect } from '../src/gate'
 import { buildJudgeRequest, parseVerdict } from '../src/judge'
 import { readOptions } from '../src/options'
 import type { Config } from '../src/options'
-import { MAX_QUOTE, parseLedger } from '../src/rules'
-import type { Ledger } from '../src/rules'
+import { MAX_QUOTE } from '../src/rules'
 import { ruleSection } from '../src/section'
 import { oneLine } from '../src/text'
 
@@ -15,7 +16,7 @@ type Engine = Parameters<Hook<'prompt.submit'>>[0]
 
 // The parts of `$` the judge needs once the hook that started it has returned.
 type Io = {
-  store: { get: (key: string) => Promise<unknown>; set: (key: string, value: unknown) => Promise<void> }
+  disk: () => Promise<Disk>
   cwd: () => Promise<string>
   now: () => Promise<number>
   toast: (text: string) => void
@@ -23,13 +24,41 @@ type Io = {
 }
 
 const SECTION_ID = 'correction-ledger:rules'
-const ENABLED_KEY = 'enabled'
 const JUDGE_TOKENS = 400
+const DIR_MS = 5000
 
-const ledgerKey = (cwd: string): string => `ledger:${cwd}`
+let dir: Promise<string> | null = null
 
-const ioFrom = ($: Engine, config: Config): Io => ({
-  store: { get: key => $.store.get(key), set: (key, value) => $.store.set(key, value) },
+// The disk is built from `$` of whichever hook needs it; the directory is resolved once.
+const diskOf = async ($: Engine): Promise<Disk> => {
+  dir ??= $.process.run(DIR_ARGV, { timeoutMs: DIR_MS }).then(r => {
+    const found = r.stdout.trim()
+    if (found === '') throw new Error('correction-ledger: no directory')
+    return found
+  })
+  const resolved = await dir.catch((error: unknown) => {
+    dir = null
+    throw error
+  })
+  return {
+    dir: resolved,
+    read: async path => {
+      try {
+        return await $.fs.read(path)
+      } catch {
+        return null
+      }
+    },
+    exists: path => $.fs.exists(path),
+    run: async (argv, init) => {
+      const r = await $.process.run(argv, init)
+      return { exitCode: r.exitCode, stdout: r.stdout }
+    },
+  }
+}
+
+const ioFrom = ($: Engine, config: Config, disk: () => Promise<Disk>): Io => ({
+  disk,
   cwd: () => $.session.cwd(),
   now: () => $.clock.now(),
   toast: text => $.ui.toast(text),
@@ -44,12 +73,6 @@ const ioFrom = ($: Engine, config: Config): Io => ({
     }),
 })
 
-const isEnabled = async ($: Engine): Promise<boolean> => (await $.store.get(ENABLED_KEY)) !== false
-
-type Get = (key: string) => Promise<unknown>
-
-const readLedger = async (get: Get, cwd: string): Promise<Ledger> => parseLedger(await get(ledgerKey(cwd)))
-
 // The user's own words, from the composer or their phone; not a scheduled run or a notification.
 const isUsers = (origin: PromptOrigin): boolean => origin.kind === 'composer' || origin.kind === 'bridge'
 
@@ -63,17 +86,26 @@ const lastAnswer = async ($: Engine): Promise<string> => {
   }
 }
 
-// One model call turns a possible correction into a verdict; the ledger is read again before the verdict is applied.
+// One model call turns a possible correction into a verdict. The verdict is applied to the ledger as
+// it stands when the call returns, so rules other sessions saved meanwhile are kept.
 const judge = async (io: Io, config: Config, text: string, last: string): Promise<void> => {
+  const disk = await io.disk()
   const cwd = await io.cwd()
-  const before = await readLedger(io.store.get, cwd)
+  const before = await readLedger(disk, cwd)
   const reply = await io.complete(buildJudgeRequest({ text, last, rules: before.rules }))
   if (!reply.isAnswered) return
   const verdict = parseVerdict(reply.text, before.rules, text)
-  const current = await readLedger(io.store.get, cwd)
-  const applied = applyVerdict(current, verdict, { quote: oneLine(text, MAX_QUOTE), now: await io.now(), max: config.maxRules })
-  if (applied.ledger !== current) await io.store.set(ledgerKey(cwd), applied.ledger)
-  if (applied.note !== null) io.toast(applied.note)
+  if (verdict.kind === 'none') return
+  const when = { quote: oneLine(text, MAX_QUOTE), now: await io.now(), max: config.maxRules }
+  try {
+    const note = await updateLedger(disk, cwd, l => {
+      const applied = applyVerdict(l, verdict, when)
+      return { ledger: applied.ledger, result: applied.note }
+    })
+    if (note !== null) io.toast(note)
+  } catch {
+    io.toast('correction-ledger: a correction could not be saved')
+  }
 }
 
 export const register: Register = (on, options) => {
@@ -82,7 +114,7 @@ export const register: Register = (on, options) => {
   let queue: Promise<void> = Promise.resolve()
 
   on('session.start', async ($, e, next) => {
-    io = ioFrom($, config)
+    io = ioFrom($, config, () => diskOf($))
     try {
       await $.command.register({
         name: 'rules',
@@ -98,7 +130,7 @@ export const register: Register = (on, options) => {
 
   // The prompt is never held up: the verdict comes later, one at a time, and a failure leaves the ledger as it was.
   on('prompt.submit', async ($, e, next) => {
-    if (io !== null && isUsers(e.origin) && mightCorrect(e.text) && (await isEnabled($))) {
+    if (io !== null && isUsers(e.origin) && mightCorrect(e.text) && !(await isPaused(await diskOf($)))) {
       const judging = io
       const last = await lastAnswer($)
       queue = queue.then(() => judge(judging, config, e.text, last)).catch(() => undefined)
@@ -106,23 +138,32 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch((_$, e, next) => next(e))
 
+  // Read from the file every turn: rules another session saved arrive without a restart.
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
-    if (!(await isEnabled($))) return composed
-    const text = ruleSection((await readLedger(key => $.store.get(key), await $.session.cwd())).rules)
-    return text === null ? composed : { sections: [...composed.sections, { id: SECTION_ID, text, scope: 'session' }] }
+    try {
+      const disk = await diskOf($)
+      if (await isPaused(disk)) return composed
+      const text = ruleSection((await readLedger(disk, await $.session.cwd())).rules)
+      return text === null ? composed : { sections: [...composed.sections, { id: SECTION_ID, text, scope: 'session' }] }
+    } catch {
+      return composed
+    }
   })
 
   on('command.run', { command: 'rules' }, async ($, e) => {
-    const cwd = await $.session.cwd()
-    const out = runRules(e.args ?? '', {
-      ledger: await readLedger(key => $.store.get(key), cwd),
-      enabled: await isEnabled($),
-      now: await $.clock.now(),
-      max: config.maxRules,
-    })
-    if (out.ledger !== undefined) await $.store.set(ledgerKey(cwd), out.ledger)
-    if (out.enabled !== undefined) await $.store.set(ENABLED_KEY, out.enabled)
-    return { text: out.text }
+    try {
+      const disk = await diskOf($)
+      const enabled = !(await isPaused(disk))
+      const now = await $.clock.now()
+      const out = await updateLedger(disk, await $.session.cwd(), l => {
+        const ran = runRules(e.args ?? '', { ledger: l, enabled, now, max: config.maxRules })
+        return { ledger: ran.ledger ?? l, result: ran }
+      })
+      if (out.enabled !== undefined) await disk.run(pauseArgv(disk.dir, !out.enabled))
+      return { text: out.text }
+    } catch {
+      return { text: 'correction-ledger: the ledger could not be read or written' }
+    }
   })
 }
