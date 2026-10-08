@@ -1,0 +1,28 @@
+{
+  "name": "fleet-board",
+  "version": "0.1.0",
+  "description": "A pane for the other Claude sessions you run: who is working, who went quiet. Brief, ping, task or stop them, and open new sessions from the pane.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "launcher": {
+      "type": "string",
+      "title": "Where new sessions open",
+      "description": "auto opens a terminal window when it can and a background tmux session otherwise. Or name one: ghostty, wezterm, tmux.",
+      "default": "auto"
+    },
+    "claudeArgs": {
+      "type": "string",
+      "title": "Extra claude arguments",
+      "description": "Added to the claude command of every session opened from the pane, split on spaces. Example: --model opus",
+      "default": ""
+    },
+    "quietMinutes": {
+      "type": "number",
+      "title": "Quiet warning (minutes)",
+      "description": "A working session that has not changed state for this long gets a warning mark.",
+      "default": 30,
+      "min": 5,
+      "max": 600
+    }
+  }
+}

@@ -20,6 +20,12 @@
       "source": "./plugins/correction-ledger",
       "description": "Saves each correction you make as a standing rule, feeds the rules back every turn, and makes a rule louder each time it is broken.",
       "category": "prompt"
+    },
+    {
+      "name": "fleet-board",
+      "source": "./plugins/fleet-board",
+      "description": "A pane for the other Claude sessions you run: who is working, who went quiet. Brief, ping, task or stop them, and open new sessions from the pane.",
+      "category": "tools"
     }
   ]
 }
