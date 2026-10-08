@@ -1,6 +1,6 @@
 # rescribe
 
-A prompt enhancer that works in place. You press a shortcut, rescribe rewrites the draft in the prompt box, and a menu shows what would change. Nothing is sent or dropped, so pasted images and `@file` mentions stay attached.
+A prompt enhancer that works in place. You press a shortcut and rescribe rewrites the draft in the prompt box. Your original goes into the Up-arrow history, one key away. Nothing is sent or dropped, so pasted images and `@file` mentions stay attached.
 
 ## Set up the shortcut
 
@@ -20,7 +20,16 @@ A mod cannot add its own action name; Claude Code ignores unknown ones. rescribe
 ## Use
 
 1. Type a draft.
-2. Press the shortcut. A model call rewrites the draft (Haiku on high effort by default). The draft stays in the box. The diff opens in a pane, and a two-row menu above the prompt holds the title, the count and the buttons:
+2. Press the shortcut. A model call rewrites the draft (Haiku on high effort by default). The enhanced text goes into the box, and a toast says `applied · ↑ brings back your original`.
+3. Press Up to see your original (twice, when the draft wraps over several lines) and Down to come back to the enhanced text. Enter sends whichever is in the box.
+
+### Your original in history
+
+The original is appended to `history.jsonl` in the Claude config directory (`$CLAUDE_CONFIG_DIR`, or `~/.claude`), as an entry for the current folder and session. That file is Claude Code's own, so rescribe reads its last entries each time and copies their layout: the same keys in the same order, with the draft, the time, the folder and the session filled in, and an empty value for any key it does not know. If the file is missing, cannot be written or has no entry it can read, nothing is written and the toast says so. A draft that holds pasted text or an image is applied, but not saved, because those live beside the entry and would not come back with it.
+
+### Review menu
+
+With `autoAccept` off, the draft stays in the box until you decide, and nothing goes to history until you apply. The diff opens in a pane, and a two-row menu above the prompt holds the title, the count and the buttons:
 
 ```
 ✎ Enhance Prompt  2 changes · 29 → 29 chars
@@ -31,7 +40,7 @@ The pane docks beside the transcript at full height in fullscreen from 110 colum
 
 The pane opens with a `Changes −N +M` header and a rule. The diff is a normal one: removed lines under `−` and added lines under `+`, each tinted edge to edge in the theme's own diff colors, the changed words bold on a stronger tint, unchanged lines around a change dimmed, and long unchanged runs folded to `⋯ N unchanged lines`. Lines wrap at any terminal width.
 
-3. Press the shortcut again or click **Apply** to put the text in the box. Type or click **Dismiss** to keep your draft. Enter sends as usual.
+Press the shortcut again or click **Apply** to put the text in the box. Type or click **Dismiss** to keep your draft. Enter sends as usual.
 
 Apply puts the rewrite in the box exactly as the menu shows it. The model rewrites for clarity (goal, then context, then constraints, as short paragraphs or bullets) and keeps names, paths, URLs, code, `[Image #N]` tags, `@file` mentions and hedges. It adds nothing and does not answer the draft. A clear draft comes back unchanged unless an edit meaningfully improves it, and you get a "nothing to improve" toast. A rewrite that changes only punctuation or layout still opens the menu, labelled `no word changes`.
 
@@ -49,13 +58,14 @@ In `/plugin`, or under `pluginConfigs` in your settings:
 
 - `model`: `haiku` (default), `sonnet`, `opus` or a full model id.
 - `effort`: `high` (default), `low`, `medium`, `xhigh` or `max`. Any other value counts as `high`.
-- `autoAccept`: off by default. When on, the enhanced text goes into the prompt box right away with an `applied` toast and no menu opens. If the box is busy or its text changed, the menu opens or nothing is applied, as usual.
+- `autoAccept`: on by default. The enhanced text goes into the prompt box right away with an `applied` toast, your original goes into history, and no menu opens. If the box is busy, the menu opens instead; if the draft changed while the model worked, nothing is applied. Turn it off to review each change in the menu first.
 - `timeoutSeconds`: 20 by default, from 5 to 120.
 
 ## Files
 
 - `hooks/register.tsx`: the `ui.render` hooks (the idle button, the menu, the diff pane and the model call), and the `prompt.edit`, `prompt.submit` and `ui.close` hooks that keep them in step.
 - `src/enhance.ts`: the instructions sent to the model and the checks on its reply.
+- `src/history.ts`: reads the layout of Claude Code's history file and builds the entry for your original draft.
 - `src/options.ts`: the settings.
 - `src/ui.tsx`: the idle button, the menu and the diff pane, and the action name.
 - `src/view.ts`: the diff rows: line diff, context and folds.

@@ -19,8 +19,8 @@
     "autoAccept": {
       "type": "boolean",
       "title": "Auto accept",
-      "description": "Put the enhanced text in the prompt box right away instead of opening the menu.",
-      "default": false
+      "description": "Put the enhanced text in the prompt box right away and keep your original in the Up-arrow history, instead of opening the review menu.",
+      "default": true
     },
     "timeoutSeconds": {
       "type": "number",

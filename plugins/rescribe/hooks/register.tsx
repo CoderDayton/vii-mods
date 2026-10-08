@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { Hook, Register } from 'claude-code'
 
 import { findChord } from '../src/chord'
 import { diffPairs } from '../src/diff'
 import { MAX_DRAFT, acceptEnhanced, buildRequest, refusalReason } from '../src/enhance'
+import { appendArgv, buildEntry, hasAttachments, historyPathOf, learnShape, tailArgv } from '../src/history'
 import { readOptions } from '../src/options'
 import { ACTION, idleView, paneView, reviewView, withBelow } from '../src/ui'
 import { paneRows, reviewModel } from '../src/view'
@@ -12,6 +13,49 @@ const reviewAtom = atom({ plugin: 'rescribe', key: 'review' } as const, null)
 
 const BASE_TOKENS = 512
 const PANE_ID = 'rescribe-diff'
+const HISTORY_MS = 5000
+
+type Engine = Parameters<Hook<'prompt.submit'>>[0]
+
+type Saved = 'saved' | 'attachments' | 'unrecognised' | 'failed'
+
+const APPLIED: Record<Saved, string> = {
+  saved: 'rescribe: applied · ↑ brings back your original',
+  attachments: 'rescribe: applied (your original has pasted text or an image, so it is not in history)',
+  unrecognised: 'rescribe: applied (the history file layout was not recognised, so your original is not in history)',
+  failed: 'rescribe: applied (could not save your original to history)',
+}
+
+// Where Claude Code keeps its settings and history.
+const configDir = async ($: Engine): Promise<string | undefined> => {
+  const custom = await $.env.get('CLAUDE_CONFIG_DIR')
+  const home = await $.env.get('HOME')
+  return custom ?? (home === undefined ? undefined : `${home}/.claude`)
+}
+
+// Adds the original draft to the Up-arrow history, in the layout the history file has now.
+const saveOriginal = async ($: Engine, original: string): Promise<Saved> => {
+  if (hasAttachments(original)) return 'attachments'
+  try {
+    const dir = await configDir($)
+    if (dir === undefined) return 'failed'
+    const path = historyPathOf(dir)
+    const tail = await $.process.run(tailArgv(path), { timeoutMs: HISTORY_MS })
+    if (tail.exitCode !== 0) return 'failed'
+    const shape = learnShape(tail.stdout)
+    if (shape === null) return 'unrecognised'
+    const line = buildEntry(shape, {
+      text: original,
+      now: await $.clock.now(),
+      project: await $.session.root(),
+      sessionId: await $.session.id(),
+    })
+    const written = await $.process.run(appendArgv(path, line), { timeoutMs: HISTORY_MS })
+    return written.exitCode === 0 ? 'saved' : 'failed'
+  } catch {
+    return 'failed'
+  }
+}
 
 export const register: Register = (on, options) => {
   const config = readOptions(options)
@@ -64,9 +108,7 @@ export const register: Register = (on, options) => {
 
     if (chord === undefined) {
       try {
-        const custom = await $.env.get('CLAUDE_CONFIG_DIR')
-        const home = await $.env.get('HOME')
-        const dir = custom ?? (home === undefined ? undefined : `${home}/.claude`)
+        const dir = await configDir($)
         chord = dir === undefined ? null : findChord(String(await $.fs.read(`${dir}/keybindings.json`)), ACTION)
       } catch {
         chord = null
@@ -121,7 +163,7 @@ export const register: Register = (on, options) => {
         else {
           const review = { original: text, fixed: enhanced, pairs: diffPairs(text, enhanced) }
           if (config.autoAccept && (await $.prompt.fill({ text: enhanced })).isFilled) {
-            $.ui.toast('rescribe: applied')
+            $.ui.toast(APPLIED[await saveOriginal($, text)])
             return
           }
           if (config.autoAccept) $.ui.toast('rescribe: the prompt box is busy, so the text could not be put in it')
@@ -156,7 +198,10 @@ export const register: Register = (on, options) => {
         return
       }
       const filled = await $.prompt.fill({ text: review.fixed })
-      if (filled.isFilled) return
+      if (filled.isFilled) {
+        $.ui.toast(APPLIED[await saveOriginal($, review.original)])
+        return
+      }
       await update($, reviewAtom, () => review)
       $.ui.toast('rescribe: the prompt box is busy, so the text could not be put in it')
     }

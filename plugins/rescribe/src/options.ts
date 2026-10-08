@@ -25,6 +25,6 @@ export const readOptions = (o: Readonly<Record<string, unknown>>): Config => {
     model: model === '' ? DEFAULT_MODEL : model,
     effort: effort(o['effort']),
     timeoutMs: seconds(o['timeoutSeconds']) * 1000,
-    autoAccept: o['autoAccept'] === true,
+    autoAccept: o['autoAccept'] !== false,
   }
 }
