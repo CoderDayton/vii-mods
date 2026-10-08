@@ -48,10 +48,10 @@ const fnv = (text: string, seed: number): number => {
   return h >>> 0
 }
 
-// A readable name plus a hash of the whole path, so two folders called "app" stay apart.
-export const ledgerPathOf = (dir: string, cwd: string): string => {
-  const slug = (cwd.split('/').filter(Boolean).pop() ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-  const hash = fnv(cwd, 2_166_136_261).toString(36) + fnv(cwd, 1_099_511_627).toString(36)
+// One file per project root: a readable name plus a hash of the whole path, so two projects called "app" stay apart.
+export const ledgerPathOf = (dir: string, root: string): string => {
+  const slug = (root.split('/').filter(Boolean).pop() ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const hash = fnv(root, 2_166_136_261).toString(36) + fnv(root, 1_099_511_627).toString(36)
   return `${dir}/ledger-${slug.slice(0, SLUG_MAX) || 'root'}-${hash}.json`
 }
 
@@ -72,14 +72,14 @@ const ledgerOf = (raw: string): Ledger => {
   }
 }
 
-export const readLedger = async (disk: Disk, cwd: string): Promise<Ledger> => ledgerOf(await rawOf(disk, ledgerPathOf(disk.dir, cwd)))
+export const readLedger = async (disk: Disk, root: string): Promise<Ledger> => ledgerOf(await rawOf(disk, ledgerPathOf(disk.dir, root)))
 
 export type Change<T> = (ledger: Ledger) => { ledger: Ledger; result: T }
 
-// Reads the folder's ledger, applies the change and swaps the result in. If another session wrote in
+// Reads the project's ledger, applies the change and swaps the result in. If another session wrote in
 // between, the change runs again on what it wrote.
-export const updateLedger = async <T>(disk: Disk, cwd: string, change: Change<T>): Promise<T> => {
-  const path = ledgerPathOf(disk.dir, cwd)
+export const updateLedger = async <T>(disk: Disk, root: string, change: Change<T>): Promise<T> => {
+  const path = ledgerPathOf(disk.dir, root)
   for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
     const old = await rawOf(disk, path)
     const current = ledgerOf(old)

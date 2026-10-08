@@ -17,7 +17,7 @@ type Engine = Parameters<Hook<'prompt.submit'>>[0]
 // The parts of `$` the judge needs once the hook that started it has returned.
 type Io = {
   disk: () => Promise<Disk>
-  cwd: () => Promise<string>
+  root: () => Promise<string>
   now: () => Promise<number>
   toast: (text: string) => void
   complete: (request: { system: string; prompt: string }) => Promise<ModelCompleteResult>
@@ -57,9 +57,13 @@ const diskOf = async ($: Engine): Promise<Disk> => {
   }
 }
 
+// The project a session belongs to: its git repository's root (the main working tree's, for a worktree), so a
+// session started in a subfolder shares the repository's rules; outside git, the folder it started in.
+const projectOf = async ($: Engine): Promise<string> => (await $.session.repo())?.root ?? (await $.session.root())
+
 const ioFrom = ($: Engine, config: Config, disk: () => Promise<Disk>): Io => ({
   disk,
-  cwd: () => $.session.cwd(),
+  root: () => projectOf($),
   now: () => $.clock.now(),
   toast: text => $.ui.toast(text),
   complete: request =>
@@ -90,15 +94,15 @@ const lastAnswer = async ($: Engine): Promise<string> => {
 // it stands when the call returns, so rules other sessions saved meanwhile are kept.
 const judge = async (io: Io, config: Config, text: string, last: string): Promise<void> => {
   const disk = await io.disk()
-  const cwd = await io.cwd()
-  const before = await readLedger(disk, cwd)
+  const root = await io.root()
+  const before = await readLedger(disk, root)
   const reply = await io.complete(buildJudgeRequest({ text, last, rules: before.rules }))
   if (!reply.isAnswered) return
   const verdict = parseVerdict(reply.text, before.rules, text)
   if (verdict.kind === 'none') return
   const when = { quote: oneLine(text, MAX_QUOTE), now: await io.now(), max: config.maxRules }
   try {
-    const note = await updateLedger(disk, cwd, l => {
+    const note = await updateLedger(disk, root, l => {
       const applied = applyVerdict(l, verdict, when)
       return { ledger: applied.ledger, result: applied.note }
     })
@@ -144,7 +148,7 @@ export const register: Register = (on, options) => {
     try {
       const disk = await diskOf($)
       if (await isPaused(disk)) return composed
-      const text = ruleSection((await readLedger(disk, await $.session.cwd())).rules)
+      const text = ruleSection((await readLedger(disk, await projectOf($))).rules)
       return text === null ? composed : { sections: [...composed.sections, { id: SECTION_ID, text, scope: 'session' }] }
     } catch {
       return composed
@@ -156,7 +160,7 @@ export const register: Register = (on, options) => {
       const disk = await diskOf($)
       const enabled = !(await isPaused(disk))
       const now = await $.clock.now()
-      const out = await updateLedger(disk, await $.session.cwd(), l => {
+      const out = await updateLedger(disk, await projectOf($), l => {
         const ran = runRules(e.args ?? '', { ledger: l, enabled, now, max: config.maxRules })
         return { ledger: ran.ledger ?? l, result: ran }
       })

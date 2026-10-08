@@ -11,8 +11,8 @@
     },
     "maxRules": {
       "type": "number",
-      "title": "Rules kept per folder",
-      "description": "How many rules a folder keeps. Past this, the rule broken least often and unused longest goes.",
+      "title": "Rules kept per project",
+      "description": "How many rules a project keeps. Past this, the rule broken least often and unused longest goes.",
       "default": 12,
       "min": 3,
       "max": 30

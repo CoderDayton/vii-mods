@@ -2,7 +2,7 @@
 
 Say a correction once. Claude keeps it.
 
-When you push back on Claude ("I said no semicolons"), the ledger saves the point as a short rule. Every later turn in that folder carries the rules in the system prompt. If Claude breaks a rule and you say it again, the rule gets a strike and is sent louder.
+When you push back on Claude ("I said no semicolons"), the ledger saves the point as a short rule. Every later turn in that project carries the rules in the system prompt. If Claude breaks a rule and you say it again, the rule gets a strike and is sent louder.
 
 ## Strikes
 
@@ -24,32 +24,34 @@ Broken rules are listed first, and the prompt tells Claude to check its work aga
 
 Only prompts you type are judged. Scheduled runs and notifications are not.
 
-## Several sessions in one folder
+## Projects and sessions
 
-All sessions in a folder share one ledger file. The file is read on every turn, so a rule saved in one session reaches the others on their next prompt, with no restart. A write replaces the file only if it still holds what the writer read; otherwise the writer reads again and redoes its change. Two sessions saving at the same moment keep both rules.
+Rules belong to the project: the root of the git repository the session runs in (for a worktree, the main working tree's root). A session started in a subfolder uses the same rules as one started at the root. Outside git, the folder Claude Code was started in is the project. Another project starts empty.
+
+All sessions in a project share one ledger file. The file is read on every turn, so a rule saved in one session reaches the others on their next prompt, with no restart. A write replaces the file only if it still holds what the writer read; otherwise the writer reads again and redoes its change. Two sessions saving at the same moment keep both rules.
 
 ## Commands
 
 | Command | Does |
 | --- | --- |
-| `/rules` | List the rules for this folder, with what you said and when |
+| `/rules` | List the rules for this project, with what you said and when |
 | `/rules add <rule>` | Save a rule by hand |
 | `/rules rm <number>` | Remove a rule |
-| `/rules clear` | Remove all rules in this folder |
-| `/rules off` / `/rules on` | Pause or resume saving and sending, for every folder |
+| `/rules clear` | Remove all rules in this project |
+| `/rules off` / `/rules on` | Pause or resume saving and sending, for every project |
 
 ## Options
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `model` | `haiku` | Model that judges prompts |
-| `maxRules` | `12` | Rules kept per folder (3 to 30) |
+| `maxRules` | `12` | Rules kept per project (3 to 30) |
 | `timeoutSeconds` | `15` | Wait for the model before dropping a check (5 to 60) |
 
 ## Limits
 
-- Rules belong to the folder path they were made in. Another folder starts empty.
+- Rules apply to one project only. For a rule that holds everywhere, use your global `CLAUDE.md`.
 - Rules live in `~/.claude/plugins/correction-ledger/` (or under `$CLAUDE_CONFIG_DIR`), not in the project, so they are not shared with a team.
-- `/rules off` pauses the ledger for every folder and every session.
+- `/rules off` pauses the ledger for every project and every session.
 - The filter misses corrections with no pushback wording ("use tabs here"). `/rules add` covers those.
 - Each possible correction costs one small model call.
