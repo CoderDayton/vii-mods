@@ -11,6 +11,7 @@ export type Cmd =
   | { kind: 'ping'; who: string }
   | { kind: 'pingTeam' }
   | { kind: 'stop'; who: string }
+  | { kind: 'drop'; who: string }
   | { kind: 'brief'; who: string; role: string }
   | { kind: 'task'; who: string; text: string }
   | { kind: 'disband' }
@@ -26,6 +27,7 @@ export const USAGE = [
   `/fleet brief <session> <role>           add it to the team (${ROLE_IDS})`,
   '/fleet task <session> <text>            hand it a task',
   '/fleet stop <session>                   tell it to stop its run',
+  '/fleet drop <session>                   take it off the team',
   `/fleet new <folder> [role] [task]        open a new session and brief it`,
   '/fleet disband                          tell the team it is disbanded',
   '/fleet close                            close the pane',
@@ -54,6 +56,8 @@ export const parseCommand = (args: string): Cmd => {
       return first.toLowerCase() === 'team' ? { kind: 'pingTeam' } : { kind: 'ping', who: first }
     case 'stop':
       return first === undefined ? bad('usage: /fleet stop <session>') : { kind: 'stop', who: first }
+    case 'drop':
+      return first === undefined ? bad('usage: /fleet drop <session>') : { kind: 'drop', who: first }
     case 'task':
       return first === undefined || rest(2) === '' ? bad('usage: /fleet task <session> <text>') : { kind: 'task', who: first, text: rest(2) }
     case 'brief':
@@ -108,6 +112,7 @@ export const runCommand = async (cmd: Cmd, fleet: Fleet, ctx: CommandContext): P
       if ('error' in found) return { text: found.error }
       if (cmd.kind === 'ping') return out(await fleet.ping(found.peer))
       if (cmd.kind === 'stop') return out(await fleet.stop(found.peer))
+      if (cmd.kind === 'drop') return out(await fleet.drop(found.peer))
       if (cmd.kind === 'task') return out(await fleet.task(found.peer, cmd.text))
       return out(await fleet.brief(found.peer, roleOf(cmd.role) ?? ROLES[0]!))
     }

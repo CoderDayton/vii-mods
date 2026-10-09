@@ -50,3 +50,5 @@ export const PING = 'Status? One line: done, running or blocked, and what you ar
 export const STOP = 'Stop your current run and wait for my next message.'
 
 export const DISBAND = 'The team is disbanded. Go back to what the user tells you.'
+
+export const DROP = 'You are off the team. Go back to what the user tells you.'

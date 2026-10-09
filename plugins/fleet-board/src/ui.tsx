@@ -23,6 +23,7 @@ export type PaneModel = {
   task: string
   notes: Note[]
   busy: string
+  confirmDisband: boolean
 }
 
 export type PaneActions = {
@@ -30,6 +31,7 @@ export type PaneActions = {
   onPing: () => void
   onBrief: () => void
   onStop: () => void
+  onDrop: () => void
   onPingTeam: () => void
   onDisband: () => void
   onRefresh: () => void
@@ -95,16 +97,35 @@ const sessionRow = (els: Els, m: PaneModel, a: PaneActions, l: Layout, r: Row) =
   )
 }
 
+const rowGroup = (els: Els, m: PaneModel, a: PaneActions, l: Layout, title: string, rows: readonly Row[]) => {
+  const { Box, Text } = els
+  return (
+    <Box flexDirection="column">
+      <Text bold>{title}</Text>
+      {rows.map(r => sessionRow(els, m, a, l, r))}
+    </Box>
+  )
+}
+
+// The team first: the sessions the boss has briefed. The rest are the sessions it can hire.
 const boardRows = (els: Els, m: PaneModel, a: PaneActions) => {
-  const { Box } = els
+  const { Box, Text } = els
   const l = layoutOf(m.columns, m.rows)
-  return <Box flexDirection="column">{m.rows.map(r => sessionRow(els, m, a, l, r))}</Box>
+  const team = m.rows.filter(r => r.role !== '—')
+  const others = m.rows.filter(r => r.role === '—')
+  return (
+    <Box flexDirection="column" gap={1}>
+      {team.length > 0 ? rowGroup(els, m, a, l, 'Your team', team) : <Text dimColor>Your team is empty.</Text>}
+      {others.length > 0 && rowGroup(els, m, a, l, 'Other sessions', others)}
+    </Box>
+  )
 }
 
 const pickedPanel = (els: Els, m: PaneModel, a: PaneActions) => {
   const { Box, Text, Button, Input, Select } = els
   const pick = m.selected
   if (pick === null) return <Text dimColor>{m.rows.length === 0 ? 'Press n to open a session.' : 'Press a number to pick a session.'}</Text>
+  const isMember = pick.role !== '—'
   return (
     <Box flexDirection="column">
       <Text bold wrap="truncate-end">{`▸ ${pick.name}`}</Text>
@@ -119,9 +140,10 @@ const pickedPanel = (els: Els, m: PaneModel, a: PaneActions) => {
       />
       <Box columnGap={2} flexWrap="wrap">
         <Button key="ping" label="Ping" hotkey="p" onPress={a.onPing} />
-        <Button key="brief" label="Brief as" hotkey="b" onPress={a.onBrief} />
-        <Select key="role" options={roleOptions} value={m.role} onSelect={a.onRole} />
+        <Button key="brief" label="Hire as" hotkey="b" onPress={a.onBrief} />
+        <Select key="role" label="Role" options={roleOptions} value={m.role} onSelect={a.onRole} />
         <Button key="stop" label="Stop run" hotkey="s" onPress={a.onStop} />
+        {isMember && <Button key="drop" label="Drop from team" onPress={a.onDrop} />}
       </Box>
     </Box>
   )
@@ -132,12 +154,14 @@ const boardView = (els: Els, m: PaneModel, a: PaneActions) => {
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold>{m.headline}</Text>
+      <Text dimColor>Hire a session to make it your employee. Then send it tasks.</Text>
       {m.rows.length > 0 && boardRows(els, m, a)}
       {pickedPanel(els, m, a)}
+      {m.confirmDisband && <Text color="warning">Every employee is told the team is disbanded. Press Confirm disband to do it.</Text>}
       <Box columnGap={2} flexWrap="wrap">
         <Button key="team" label="Ping team" hotkey="t" onPress={a.onPingTeam} />
         <Button key="new" label="New session" hotkey="n" onPress={a.onNew} />
-        <Button key="disband" label="Disband" hotkey="d" onPress={a.onDisband} />
+        <Button key="disband" label={m.confirmDisband ? 'Confirm disband' : 'Disband team'} hotkey="d" onPress={a.onDisband} />
         <Button key="refresh" label="Refresh" hotkey="r" onPress={a.onRefresh} />
         <Button key="close" label="Close" hotkey="c" onPress={a.onClose} />
       </Box>

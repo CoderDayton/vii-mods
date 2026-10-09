@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Hook, Register } from 'claude-code'
+import type { Hook, PromptComposeSection, Register } from 'claude-code'
 
 import { parseCommand, runCommand } from '../src/commands'
 import { createFleet } from '../src/fleet'
@@ -8,6 +8,9 @@ import { readOptions } from '../src/options'
 import { baseName } from '../src/peers'
 import type { Peer } from '../src/peers'
 import { roleOf } from '../src/roles'
+import { bossSection, employeeSection, hireKey, parseEmployment, parseTeam, teamKey } from '../src/team'
+import type { Hire } from '../src/team'
+import { replyAfter, TAIL_ARGV } from '../src/transcript'
 import { paneView } from '../src/ui'
 import type { Els, PaneActions } from '../src/ui'
 import { dirOptions, headline, rowsOf } from '../src/view'
@@ -25,6 +28,7 @@ const formAtom = atom({ plugin: 'fleet-board', key: 'form' } as const, {
   dir: '',
   msg: '',
   task: '',
+  confirmDisband: false,
 })
 
 const PANE_ID = 'fleet'
@@ -49,6 +53,9 @@ const stopPolling = (): void => {
 }
 
 const startHook: Hook<'session.start'> = async ($, e, next) => {
+  const self = await $.session.id()
+  const team = parseTeam(await $.store.get(teamKey(self)))
+  await update($, rosterAtom, () => team)
   io = {
     run: (argv, init) => $.process.run(argv, init),
     send: async (id, text) => {
@@ -59,9 +66,22 @@ const startHook: Hook<'session.start'> = async ($, e, next) => {
     sleep: ms => $.clock.sleep(ms),
     exists: path => $.fs.exists(path),
     selfId: () => $.session.id(),
+    reply: (peer, since) => replyOf($, peer.dir, peer.id, since),
+    store: {
+      set: (key, value) => $.store.set(key, value),
+      delete: key => $.store.delete(key),
+    },
     state: {
       peers: { get: () => read($, peersAtom), set: async fn => void (await update($, peersAtom, fn)) },
-      roster: { get: () => read($, rosterAtom), set: async fn => void (await update($, rosterAtom, fn)) },
+      // The team is kept in the store as well as the atom, so a restarted boss has it again.
+      roster: {
+        get: () => read($, rosterAtom),
+        set: async fn => {
+          const updated = fn(await read($, rosterAtom))
+          await update($, rosterAtom, () => updated)
+          await $.store.set(teamKey(self), updated)
+        },
+      },
       notes: { get: () => read($, notesAtom), set: async fn => void (await update($, notesAtom, fn)) },
       boss: { get: () => read($, bossAtom), set: async fn => void (await update($, bossAtom, fn)) },
     },
@@ -73,14 +93,46 @@ const startHook: Hook<'session.start'> = async ($, e, next) => {
   try {
     await $.command.register({
       name: 'fleet',
-      description: 'Fleet board: the other Claude sessions, with ping, brief, task, stop and new session',
-      argumentHint: '[list|ping|brief|task|stop|new|disband|close]',
+      description: 'Fleet board: the other Claude sessions, with ping, brief, task, stop, drop and new session',
+      argumentHint: '[list|ping|brief|task|stop|drop|new|disband|close]',
       immediate: true,
     })
   } catch {
     $.ui.toast('fleet-board: the /fleet command could not be registered')
   }
   return next(e)
+}
+
+// What the system prompt says about the fleet: a boss is told its team, an employee is told its boss.
+type Engine = Parameters<Hook<'session.start'>>[0]
+
+// The time of the first reply a session wrote at or after `since`, read from the end of its transcript.
+const replyOf = async ($: Engine, dir: string, id: string, since: number): Promise<number | null> => {
+  if (dir === '') return null
+  const tail = await $.process.run(TAIL_ARGV(dir, id))
+  return replyAfter(tail.stdout, since)
+}
+
+// Members that have not replied are read again, so the boss sees a reply before the next refresh. What is
+// found here is not stored; the refresh in the pane stores it.
+const withReplies = async ($: Engine, team: Record<string, Hire>): Promise<Record<string, Hire>> => {
+  const out: Record<string, Hire> = {}
+  for (const [id, hire] of Object.entries(team)) {
+    const at = hire.readyAt === undefined ? await replyOf($, hire.dir, id, hire.briefedAt) : null
+    out[id] = at === null ? hire : { ...hire, readyAt: at }
+  }
+  return out
+}
+
+const composeHook: Hook<'prompt.compose'> = async ($, e, next) => {
+  const out = await next(e)
+  const self = await $.session.id()
+  const team = bossSection(await withReplies($, parseTeam(await $.store.get(teamKey(self)))))
+  const employment = parseEmployment(await $.store.get(hireKey(self)))
+  const added: PromptComposeSection[] = []
+  if (team !== null) added.push({ id: 'fleet-board:boss', text: team, scope: 'session' })
+  if (employment !== null) added.push({ id: 'fleet-board:employee', text: employeeSection(employment), scope: 'session' })
+  return { sections: [...out.sections, ...added] }
 }
 
 // Subfolders of the project's parent, which is where the person's other projects usually live.
@@ -136,6 +188,8 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  on('prompt.compose', composeHook)
+
   on('command.run', { command: 'fleet' }, async ($, e) => {
     if (io === null || env === null) return { text: 'fleet-board has not started yet.' }
     fleet ??= createFleet(io, config)
@@ -166,19 +220,25 @@ export const register: Register = (on, options) => {
     const setForm = (patch: Partial<typeof form>) => update($, formAtom, f => ({ ...f, ...patch }))
 
     const actions: PaneActions = {
-      onPick: id => void setForm({ selected: id, msg: '' }),
+      onPick: id => void setForm({ selected: id, msg: '', confirmDisband: false }),
       onPing: () => guarded(async f => (picked() ? f.ping(picked()!) : needPick(f))),
       onBrief: () => guarded(async f => (picked() ? f.brief(picked()!, roleOf(form.role)!) : needPick(f))),
       onStop: () => guarded(async f => (picked() ? f.stop(picked()!) : needPick(f))),
+      onDrop: () => guarded(async f => (picked() ? f.drop(picked()!) : needPick(f))),
       onPingTeam: () => guarded(f => f.pingTeam()),
-      onDisband: () => guarded(f => f.disband()),
+      // Disbanding tells every employee, so the first press only asks for the second.
+      onDisband: () => {
+        if (!form.confirmDisband) return void setForm({ confirmDisband: true })
+        void setForm({ confirmDisband: false })
+        guarded(f => f.disband())
+      },
       onRefresh: () => guarded(f => f.refresh()),
       onClose: () => {
         stopPolling()
         void $.ui.close({ id: PANE_ID })
       },
       onNew: () => void setForm({ view: 'new' }),
-      onBack: () => void setForm({ view: 'board' }),
+      onBack: () => void setForm({ view: 'board', confirmDisband: false }),
       onRole: id => void setForm({ role: roleOf(id)?.id ?? form.role }),
       onDir: dir => void setForm({ dir }),
       onMsg: msg => void setForm({ msg }),
@@ -220,6 +280,7 @@ export const register: Register = (on, options) => {
       task: form.task,
       notes: (await read($, notesAtom)).slice(-NOTES_SHOWN),
       busy: await read($, busyAtom),
+      confirmDisband: form.confirmDisband,
     }, actions)
   })
 }

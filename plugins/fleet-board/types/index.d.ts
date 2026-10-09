@@ -13,8 +13,12 @@ export type Peer = {
 
 export type RoleId = 'specialist' | 'local' | 'research'
 
-// A session the pane has briefed.
-export type Hire = { role: RoleId; briefedAt: number }
+// A session the boss has briefed onto its team. `readyAt` is the time of its first reply after the briefing,
+// read from its transcript; absent while it has not replied.
+export type Hire = { name: string; dir: string; role: RoleId; briefedAt: number; readyAt?: number }
+
+// The boss an employee was briefed by, kept under the employee's session id.
+export type Employment = { bossId: string; bossName: string; role: RoleId }
 
 export type Note = { ok: boolean; text: string; at: number }
 
@@ -26,6 +30,7 @@ export type Form = {
   dir: string
   msg: string
   task: string
+  confirmDisband: boolean
 }
 
 declare module 'claude-code' {

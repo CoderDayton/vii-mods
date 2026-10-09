@@ -14,6 +14,13 @@ export type Row = {
   role: string
 }
 
+// A team member is marked waiting until its transcript shows a reply to its briefing.
+const roleText = (hire: Hire | undefined): string => {
+  const label = hire === undefined ? undefined : roleOf(hire.role)?.label
+  if (label === undefined) return '—'
+  return hire?.readyAt === undefined ? `${label} · waiting` : label
+}
+
 // A working session that has not changed state for the quiet time is the one to look at.
 export const rowsOf = (peers: readonly Peer[], roster: Readonly<Record<string, Hire>>, now: number, quietMs: number): Row[] =>
   peers.map((p, i) => {
@@ -27,7 +34,7 @@ export const rowsOf = (peers: readonly Peer[], roster: Readonly<Record<string, H
       state: p.state,
       age: fmtAge(since),
       isQuiet: p.state === 'working' && since > quietMs,
-      role: (hire !== undefined ? roleOf(hire.role)?.label : undefined) ?? '—',
+      role: roleText(hire),
     }
   })
 

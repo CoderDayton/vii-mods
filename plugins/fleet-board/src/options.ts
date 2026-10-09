@@ -1,7 +1,7 @@
 import type { Config } from './fleet'
 import type { LauncherOption } from './launch'
 
-const LAUNCHERS: readonly LauncherOption[] = ['auto', 'ghostty', 'wezterm', 'tmux']
+const LAUNCHERS: readonly LauncherOption[] = ['auto', 'ghostty', 'wezterm', 'tmux', 'tmux-pane', 'wezterm-pane']
 const DEFAULT_QUIET = 30
 const MIN_QUIET = 5
 const MAX_QUIET = 600
