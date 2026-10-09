@@ -43,12 +43,8 @@ export const briefing = (boss: string, role: Role): string =>
     '- If the user tells you something different in your own session, follow the user.',
   ].join('\n')
 
-export const taskMessage = (boss: string, text: string): string => `Task from ${boss}: ${text}`
-
-export const PING = 'Status? One line: done, running or blocked, and what you are on.'
-
-export const STOP = 'Stop your current run and wait for my next message.'
-
-export const DISBAND = 'The team is disbanded. Go back to what the user tells you.'
+// The id is echoed in the employee's reply: the boss marks a task done only when a reply contains its id.
+export const taskMessage = (boss: string, id: string, text: string): string =>
+  `Task from ${boss} (id ${id}): ${text}\nPut the full report in your final reply, not in a separate message to the boss. End it with "done ${id}" or "blocked ${id}".`
 
 export const DROP = 'You are off the team. Go back to what the user tells you.'

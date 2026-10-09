@@ -27,14 +27,15 @@ const world = (on: Parameters<typeof mock.clock>[0], seed: Record<string, unknow
       { id: 'm1', name: 'mnemos-9e', dir: '/p/mnemos', state: 'busy', at: 3, updated: NOW - 3_600_000 },
     ] as Rec[],
     sent: [] as Array<{ to: unknown; text: string }>,
-    launched: [] as string[][],
     commands: [] as string[],
     opened: [] as Array<{ id: string; title?: string }>,
     toasts: [] as string[],
     panes: [] as string[],
-    probe: 'ghostty\ntmux\ndisplay\n',
     refuse: false,
     transcripts: {} as Record<string, string>,
+    transcriptReads: 0,
+    scans: 0,
+    transcriptBytes: 0,
   }
   const ran = (stdout: string, exitCode = 0) => ({
     value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
@@ -43,7 +44,6 @@ const world = (on: Parameters<typeof mock.clock>[0], seed: Record<string, unknow
   on('session.id', () => ({ value: 'me' }))
   on('session.root', () => ({ value: '/p/claude-mods' }))
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' }] }) as never)
-  on('fs.exists', (_$, e) => ({ value: e.path === '/p/new' || e.path === '/p/claude-mods' }))
   on('fs.list', () => ({
     value: [
       { name: 'new', kind: 'dir', size: 0, mtimeMs: 0, isLink: false },
@@ -53,11 +53,17 @@ const world = (on: Parameters<typeof mock.clock>[0], seed: Record<string, unknow
   }) as never)
   on('process.run', (_$, e) => {
     const tag = e.argv[3]
-    if (tag === 'fleet-board-scan') return ran(w.sessions.map(record).join('\n'))
-    if (tag === 'fleet-board-probe') return ran(w.probe)
-    if (tag === 'fleet-board-transcript') return ran(w.transcripts[e.argv[6] ?? ''] ?? '')
-    w.launched.push([...e.argv])
-    w.sessions.push({ id: 'n1', name: 'new-1', dir: '/p/new', at: 9 })
+    if (tag === 'fleet-board-scan') {
+      w.scans += 1
+      return ran(w.sessions.map(record).join('\n'))
+    }
+    if (tag === 'fleet-board-size' || tag === 'fleet-board-read') {
+      w.transcriptReads += 1
+      const bytes = new TextEncoder().encode(w.transcripts[e.argv[5] ?? ''] ?? '')
+      const out = tag === 'fleet-board-size' ? new TextEncoder().encode(String(bytes.length)) : bytes.slice(Number(e.argv[6]))
+      w.transcriptBytes += out.length
+      return ran(new TextDecoder().decode(out))
+    }
     return ran('')
   })
   on('session.send', (_$, e) => {
@@ -91,12 +97,33 @@ type Engine = Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) 
 const slash = (args: string) => ({ command: 'fleet', args }) as never
 const run = async ($: Engine, args: string) => ((await $.command.run(slash(args))) as { text: string }).text
 
+// Calls one of the boss's fleet tools the way the model does. The engine takes the output as a string, an array or
+// undefined, and an error is marked isError; the text and the flag are read from that shape.
+const tool = async ($: Engine, name: string, input: Record<string, unknown> = {}) => {
+  const out = (await $.tool.call({ tool: `mcp__fleet-board__${name}`, ...input } as never)) as {
+    result?: unknown
+    isError?: boolean
+  }
+  expect(typeof out.result === 'string' || Array.isArray(out.result) || out.result === undefined).toBe(true)
+  return { text: typeof out.result === 'string' ? out.result : '', isError: out.isError === true }
+}
+
 const pane = ($: Engine) =>
   $.ui.mount({ plugin: 'fleet-board', surface: 'terminal', component: 'Pane', props: {} as never, requestId: PANE })
 
-// Opening a session waits for it by sleeping on the clock, which the test moves.
-const drive = async (w: ReturnType<typeof world>) => {
-  for (let i = 0; i < 4; i++) await w.clock.advance(1000)
+const TEAM = { 'team:me': { q1: { name: 'quorum-63', dir: '/p/quorum', role: 'research', briefedAt: 1 } } }
+
+const DONE_TEAM = {
+  'team:me': {
+    q1: {
+      name: 'quorum-63',
+      dir: '/p/quorum',
+      role: 'research',
+      briefedAt: 1,
+      readyAt: 2,
+      task: { id: 'k3x9qa', sentAt: 5, status: 'done', last: 'Built it.\ndone k3x9qa', announced: 'done' },
+    },
+  },
 }
 
 test('the /fleet command is registered', async ($, on) => {
@@ -105,139 +132,179 @@ test('the /fleet command is registered', async ($, on) => {
   expect(w.commands).toEqual(['fleet'])
 })
 
-test('/fleet opens the pane and lists the other sessions by text', async ($, on) => {
+test('/fleet opens the pane, and close closes it', async ($, on) => {
   const w = world(on)
   await $.session.start(LIVE)
   await run($, '')
   expect(w.opened).toEqual([{ id: PANE, title: 'Fleet' }])
-  const text = await run($, 'list')
-  expect(text.split('\n')[0]).toBe('fleet: 2 sessions · 2 working · 0 on the team')
-  expect(text).toContain('quorum-63')
-  expect(text).not.toContain('claude-mods-1c')
+  await run($, 'close')
+  expect(w.panes).toEqual([])
 })
 
-test('the pane shows each session and the numbers that pick them', async ($, on) => {
+test('/fleet has no other subcommands, so it sends nothing and changes no team', async ($, on) => {
+  const w = world(on, TEAM)
+  await $.session.start(LIVE)
+  for (const args of ['list', 'ping team', 'brief 1 research', 'task 1 go', 'drop 1', 'disband', 'new /p/new']) {
+    expect(await run($, args)).toMatch(/^usage: /)
+  }
+  expect(w.sent).toEqual([])
+  expect(w.opened).toEqual([])
+})
+
+test('the pane shows each session with its flags', async ($, on) => {
   world(on)
   await $.session.start(LIVE)
   await run($, '')
   const ui = await pane($)
   expect(await ui.find({ type: 'Text', text: /2 sessions · 2 working/ })).toBeDefined()
-  expect(await ui.find({ type: 'Button', text: /quorum-63/ })).toBeDefined()
-  expect(await ui.find({ type: 'Button', text: /mnemos-9e/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /quorum-63/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /mnemos-9e/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /!/ })).toBeDefined()
   await ui.unmount()
 })
 
-test('picking a row then Ping asks that session for status', async ($, on) => {
-  const w = world(on)
+test('the pane has no write actions: no input, no select, and only Refresh and Close as buttons', async ($, on) => {
+  world(on, TEAM)
   await $.session.start(LIVE)
   await run($, '')
   const ui = await pane($)
-  await ui.press({ key: 'row-q1' })
-  await ui.press({ key: 'ping' })
-  expect(w.sent.length).toBe(1)
+  expect(await ui.find({ type: 'Input' })).toBeUndefined()
+  expect(await ui.find({ type: 'Select' })).toBeUndefined()
+  for (const action of [/Ping/, /Hire/, /Stop/, /Drop/, /Disband/, /New session/, /Open/]) {
+    expect(await ui.find({ type: 'Button', text: action })).toBeUndefined()
+  }
+  expect(await ui.find({ type: 'Button', text: /Refresh/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /Close/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the pane shows a team member with its task id, status and reply', async ($, on) => {
+  world(on, DONE_TEAM)
+  await $.session.start(LIVE)
+  await run($, '')
+  const ui = await pane($)
+  expect(await ui.find({ type: 'Text', text: /Your team/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /task k3x9qa: done — Built it\./ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('fleet_hire briefs the session for its role and puts it on the team', async ($, on) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  const out = await tool($, 'fleet_hire', { session: 'quorum', role: 'research' })
+  expect(out).toEqual({ text: 'briefed quorum-63 as Research', isError: false })
   expect(JSON.stringify(w.sent[0]?.to)).toContain('q1')
-  expect(w.sent[0]?.text).toContain('Status?')
-  expect(await ui.find({ type: 'Text', text: /asked quorum-63 for status/ })).toBeDefined()
-  await ui.unmount()
+  expect(w.sent[0]?.text).toContain('Employee — Research / Investigation')
+  expect((await tool($, 'fleet_status')).text).toContain('quorum-63 (session q1): Research, waiting for a reply')
 })
 
-test('Brief sends the briefing for the chosen role and the row shows the role', async ($, on) => {
+test('fleet_hire of a session already on the team is an error and changes nothing', async ($, on) => {
+  const w = world(on, TEAM)
+  await $.session.start(LIVE)
+  const sent = w.sent.length
+  expect(await tool($, 'fleet_hire', { session: 'quorum', role: 'local' })).toEqual({
+    text: 'quorum-63 is already on the team; fleet_drop it first',
+    isError: true,
+  })
+  expect(w.sent.length).toBe(sent)
+  expect((await tool($, 'fleet_status')).text).toContain('quorum-63 (session q1): Research')
+})
+
+test('fleet_hire with an unknown session or role is an error and changes nothing', async ($, on) => {
   const w = world(on)
   await $.session.start(LIVE)
-  await run($, '')
-  const ui = await pane($)
-  await ui.press({ key: 'row-m1' })
-  await ui.select({ key: 'role', value: 'local' })
-  await ui.press({ key: 'brief' })
-  expect(JSON.stringify(w.sent[0]?.to)).toContain('m1')
-  expect(w.sent[0]?.text).toContain('Employee — Local Execution / Support')
-  expect(w.sent[0]?.text.startsWith("claude-mods-1c (session me), the user's boss session")).toBe(true)
-  expect(await ui.find({ type: 'Text', text: /Local execution/ })).toBeDefined()
-  await ui.unmount()
+  expect(await tool($, 'fleet_hire', { session: 'nobody', role: 'research' })).toEqual({
+    text: 'no running session matches "nobody"',
+    isError: true,
+  })
+  expect(await tool($, 'fleet_hire', { session: 'quorum', role: 'boss' })).toEqual({
+    text: 'unknown role "boss"; use specialist, local or research',
+    isError: true,
+  })
+  expect(w.sent).toEqual([])
+  expect((await tool($, 'fleet_status')).text).toBe('Your team is empty.')
 })
 
-test('typing in the task box and pressing Enter sends a task to the picked session', async ($, on) => {
+test('fleet_task sends the task from the boss and tracks its id on the team', async ($, on) => {
   const w = world(on)
   await $.session.start(LIVE)
-  await run($, '')
-  const ui = await pane($)
-  await ui.press({ key: 'row-q1' })
-  await ui.input({ key: 'message', text: 'Add tests.' })
-  expect(w.sent).toEqual([{ to: expect.anything(), text: 'Task from claude-mods-1c: Add tests.' }])
-  await ui.unmount()
+  await tool($, 'fleet_hire', { session: 'quorum', role: 'research' })
+  const out = await tool($, 'fleet_task', { session: 'quorum', text: 'Add tests for the parser.' })
+  expect(out).toEqual({ text: 'sent quorum-63 a task', isError: false })
+  expect(w.sent.at(-1)?.text).toMatch(/^Task from claude-mods-1c \(id [a-z0-9]{6}\): Add tests for the parser\.\n/)
+  expect((await tool($, 'fleet_status')).text).toMatch(/ {2}task [a-z0-9]{6}: sent/)
 })
 
-test('with no row picked the pane offers no session actions and asks for a number', async ($, on) => {
-  world(on)
+test('fleet_task is refused while the member\'s task is still open, and allowed once it is done', async ($, on) => {
+  const w = world(on, TEAM)
   await $.session.start(LIVE)
-  await run($, '')
-  const ui = await pane($)
-  expect(await ui.find({ type: 'Button', text: /^Ping$/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /Press a number to pick a session/ })).toBeDefined()
-  await ui.unmount()
+  await tool($, 'fleet_task', { session: 'quorum', text: 'First.' })
+  const open = /task ([a-z0-9]{6}): sent/.exec((await tool($, 'fleet_status')).text)?.[1] ?? ''
+  expect(open).toMatch(/^[a-z0-9]{6}$/)
+  const sent = w.sent.length
+  expect(await tool($, 'fleet_task', { session: 'quorum', text: 'Second.' })).toEqual({
+    text: `task ${open} is still open`,
+    isError: true,
+  })
+  expect(w.sent.length).toBe(sent)
 })
 
-test('a message that is not delivered shows in the pane', async ($, on) => {
-  const w = world(on)
-  w.refuse = true
+test('fleet_task is allowed once the member\'s last task is done', async ($, on) => {
+  world(on, DONE_TEAM)
   await $.session.start(LIVE)
-  await run($, '')
-  const ui = await pane($)
-  await ui.press({ key: 'row-q1' })
-  await ui.press({ key: 'ping' })
-  expect(await ui.find({ type: 'Text', text: /could not reach quorum-63: gone/ })).toBeDefined()
-  await ui.unmount()
+  expect((await tool($, 'fleet_task', { session: 'quorum', text: 'Next.' })).isError).toBe(false)
 })
 
-test('New session opens the form, and Open starts claude in the folder and briefs it', async ($, on) => {
+test('fleet_task with empty text, or for a session not on the team, is an error and sends nothing', async ($, on) => {
   const w = world(on)
   await $.session.start(LIVE)
-  await run($, '')
-  const ui = await pane($)
-  await ui.press({ key: 'new' })
-  await ui.select({ key: 'dir', value: '/p/new' })
-  await ui.select({ key: 'role', value: 'research' })
-  await ui.input({ key: 'first-task', text: 'Find the leak.', kind: 'change' } as never)
-  await ui.press({ key: 'open' })
-  await drive(w)
-  expect(w.launched).toEqual([['setsid', '-f', 'ghostty', '--working-directory=/p/new', '-e', 'claude']])
-  expect(w.sent.map(s => s.text)).toEqual([expect.stringContaining('Employee — Research / Investigation'), 'Task from claude-mods-1c: Find the leak.'])
-  expect(await ui.find({ type: 'Text', text: /opened new-1 in a ghostty window as Research/ })).toBeDefined()
-  await ui.unmount()
+  expect(await tool($, 'fleet_task', { session: 'quorum', text: '   ' })).toEqual({
+    text: 'type the task first',
+    isError: true,
+  })
+  expect(await tool($, 'fleet_task', { session: 'quorum', text: 'Add tests.' })).toEqual({
+    text: 'quorum-63 is not on the team; hire it first with fleet_hire',
+    isError: true,
+  })
+  expect(w.sent).toEqual([])
 })
 
-test('/fleet new opens a session from the command line', async ($, on) => {
+test('fleet_drop tells the member it is off the team and removes it', async ($, on) => {
+  const w = world(on, DONE_TEAM)
+  await $.session.start(LIVE)
+  expect(await tool($, 'fleet_drop', { session: 'quorum' })).toEqual({
+    text: 'dropped quorum-63 from the team',
+    isError: false,
+  })
+  expect(w.sent.at(-1)?.text).toContain('off the team')
+  expect((await tool($, 'fleet_status')).text).toBe('Your team is empty.')
+})
+
+test('fleet_drop of a session that is not on the team is an error and sends nothing', async ($, on) => {
   const w = world(on)
   await $.session.start(LIVE)
-  const pending = run($, 'new /p/new research find the leak')
-  await drive(w)
-  const text = await pending
-  expect(w.launched[0]).toEqual(['setsid', '-f', 'ghostty', '--working-directory=/p/new', '-e', 'claude'])
-  expect(text).toBe('opened new-1 in a ghostty window as Research')
-  expect(w.sent.map(s => s.text)).toEqual([expect.stringContaining('Employee — Research / Investigation'), 'Task from claude-mods-1c: find the leak'])
+  expect(await tool($, 'fleet_drop', { session: 'quorum' })).toEqual({
+    text: 'quorum-63 is not on the team',
+    isError: true,
+  })
+  expect(w.sent).toEqual([])
 })
 
-test('/fleet ping team and disband act on the sessions that were briefed', async ($, on) => {
-  const w = world(on)
+test('fleet_status lists each member with its role, reply state, task and last reply', async ($, on) => {
+  world(on, DONE_TEAM)
   await $.session.start(LIVE)
-  expect(await run($, 'ping team')).toBe('nobody is on the team yet; brief a session first')
-  await run($, 'brief quorum research')
-  w.sent.length = 0
-  expect(await run($, 'ping team')).toBe('asked 1 session for status')
-  expect(await run($, 'disband')).toBe('disbanded the team of 1')
-  expect(await run($, 'list')).toContain('0 on the team')
+  const out = await tool($, 'fleet_status')
+  expect(out.isError).toBe(false)
+  expect(out.text).toContain('quorum-63 (session q1): Research, ready')
+  expect(out.text).toContain('  task k3x9qa: done')
+  expect(out.text).toContain('  last: Built it.\n    done k3x9qa')
 })
 
-test('close closes the pane', async ($, on) => {
-  const w = world(on)
+test('a restarted boss gets its team back from the store', async ($, on) => {
+  world(on, TEAM)
   await $.session.start(LIVE)
-  await run($, '')
-  await run($, 'close')
-  expect(w.panes).toEqual([])
+  expect((await tool($, 'fleet_status')).text).toContain('quorum-63 (session q1): Research')
 })
-
-const TEAM = { 'team:me': { q1: { name: 'quorum-63', role: 'research', briefedAt: 1 } } }
 
 const COMPOSE = {
   model: 'claude-haiku-5-5',
@@ -275,61 +342,6 @@ test('a session that was briefed is told whose employee it is and where its repo
   expect(employee?.text).toContain('Send your reports to session m1')
 })
 
-test('a restarted boss gets its team back from the store', async ($, on) => {
-  world(on, TEAM)
-  await $.session.start(LIVE)
-  expect(await run($, 'list')).toContain('1 on the team')
-})
-
-test('the pane says what the team is and what to do with a member', async ($, on) => {
-  world(on, TEAM)
-  await $.session.start(LIVE)
-  await run($, '')
-  const ui = await pane($)
-  expect(await ui.find({ type: 'Text', text: /Hire a session/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /Your team/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /Other sessions/ })).toBeDefined()
-  await ui.press({ key: 'row-q1' })
-  expect(await ui.find({ type: 'Button', text: /Hire as/ })).toBeDefined()
-  expect(await ui.find({ type: 'Button', text: /Drop from team/ })).toBeDefined()
-  await ui.unmount()
-})
-
-test('Drop from team tells the member it is off the team, then the button is gone', async ($, on) => {
-  const w = world(on, TEAM)
-  await $.session.start(LIVE)
-  await run($, '')
-  const ui = await pane($)
-  await ui.press({ key: 'row-q1' })
-  await ui.press({ key: 'drop' })
-  expect(w.sent.length).toBe(1)
-  expect(w.sent[0]?.text).toContain('off the team')
-  expect(await ui.find({ type: 'Button', text: /Drop from team/ })).toBeUndefined()
-  await ui.unmount()
-})
-
-test('/fleet drop removes a member from the team', async ($, on) => {
-  const w = world(on, TEAM)
-  await $.session.start(LIVE)
-  expect(await run($, 'drop quorum')).toBe('dropped quorum-63 from the team')
-  expect(w.sent[0]?.text).toContain('off the team')
-  expect(await run($, 'list')).toContain('0 on the team')
-})
-
-test('Disband team asks once more before it tells the team', async ($, on) => {
-  const w = world(on, TEAM)
-  await $.session.start(LIVE)
-  await run($, '')
-  const ui = await pane($)
-  await ui.press({ key: 'disband' })
-  expect(w.sent).toEqual([])
-  expect(await ui.find({ type: 'Button', text: /Confirm disband/ })).toBeDefined()
-  await ui.press({ key: 'disband' })
-  expect(w.sent.length).toBe(1)
-  expect(w.sent[0]?.text).toContain('disbanded')
-  await ui.unmount()
-})
-
 test('a boss sees that an employee has replied, from the end of the employee transcript', async ($, on) => {
   const w = world(on, { 'team:me': { q1: { name: 'quorum-63', dir: '/p/quorum', role: 'research', briefedAt: NOW - 1000 } } })
   w.transcripts['q1'] = JSON.stringify({
@@ -341,4 +353,57 @@ test('a boss sees that an employee has replied, from the end of the employee tra
   const { sections } = await $.prompt.compose(COMPOSE)
   expect(sections.find(s => s.id === 'fleet-board:boss')?.text).toContain('- quorum-63 (session q1): Research, ready')
   expect(w.sent).toEqual([])
+})
+
+test('the team is read again every few seconds while the session is open, with the pane closed', async ($, on) => {
+  const w = world(on, { 'team:me': { q1: { name: 'quorum-63', dir: '/p/quorum', role: 'research', briefedAt: 1 } } })
+  w.transcripts['q1'] = JSON.stringify({
+    type: 'assistant',
+    timestamp: new Date(NOW).toISOString(),
+    message: { content: [{ type: 'text', text: 'ready' }] },
+  })
+  await $.session.start(LIVE)
+  expect(w.transcriptReads).toBe(0)
+  await w.clock.advance(4000)
+  expect(w.transcriptReads).toBeGreaterThan(0)
+})
+
+test('with no team the session does not scan or read transcripts in the background', async ($, on) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  await w.clock.advance(8000)
+  expect(w.scans).toBe(0)
+  expect(w.transcriptReads).toBe(0)
+})
+
+test('with the pane open and nobody on the team, the other-sessions list is still read in the background', async ($, on) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  await run($, '')
+  const before = w.scans
+  await w.clock.advance(8000)
+  expect(w.scans).toBeGreaterThan(before)
+})
+
+test('a second session start replaces the timer, so one tick reads the team once', async ($, on) => {
+  const w = world(on, { 'team:me': { q1: { name: 'quorum-63', dir: '/p/quorum', role: 'research', briefedAt: 1 } } })
+  await $.session.start(LIVE)
+  await w.clock.advance(4000)
+  const once = w.transcriptReads
+  expect(once).toBeGreaterThan(0)
+  await $.session.start(LIVE)
+  w.transcriptReads = 0
+  await w.clock.advance(4000)
+  expect(w.transcriptReads).toBe(once)
+})
+
+test('the boss prompt reads a waiting member from its cursor, so a second prompt reads fewer bytes', async ($, on) => {
+  const w = world(on, { 'team:me': { q1: { name: 'quorum-63', dir: '/p/quorum', role: 'research', briefedAt: 1 } } })
+  w.transcripts['q1'] = `${JSON.stringify({ type: 'user', timestamp: new Date(NOW).toISOString(), message: { content: [{ type: 'text', text: 'briefing' }] } })}\n`
+  await $.session.start(LIVE)
+  await $.prompt.compose(COMPOSE)
+  const first = w.transcriptBytes
+  w.transcriptBytes = 0
+  await $.prompt.compose(COMPOSE)
+  expect(w.transcriptBytes).toBeLessThan(first)
 })

@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Peer } from '../src/peers'
-import { dirOptions, headline, layoutOf, rowsOf } from '../src/view'
+import { headline, layoutOf, rowsOf } from '../src/view'
 
 const MIN = 60_000
 
@@ -19,8 +19,21 @@ test('a row has its number, names, state, age and role', () => {
   const rows = rowsOf(PEERS, { a: { name: 'quorum-63', dir: '/p/quorum', role: 'research', briefedAt: 1, readyAt: 2 } }, NOW, 30 * MIN)
   expect(rows[0]).toEqual({
     n: 1, id: 'a', name: 'quorum-63', folder: 'quorum', state: 'working', age: '2m', isQuiet: false, role: 'Research',
+    task: '', last: '',
   })
   expect(rows[2]).toMatchObject({ n: 3, folder: 'lune-voice', state: 'idle', age: '1h', role: '—' })
+})
+
+test('a team member row carries its task id and status, and the first line of its reply', () => {
+  const roster = {
+    a: {
+      name: 'quorum-63', dir: '/p/quorum', role: 'research' as const, briefedAt: 1, readyAt: 2,
+      task: { id: 'k3x9qa', sentAt: 5, status: 'done' as const, last: 'Built it.\ndone k3x9qa' },
+    },
+  }
+  const rows = rowsOf(PEERS, roster, NOW, 30 * MIN)
+  expect(rows[0]).toMatchObject({ task: 'task k3x9qa: done', last: 'Built it.' })
+  expect(rows[1]).toMatchObject({ task: '', last: '' })
 })
 
 test('a team member that has not replied yet is marked waiting in its role', () => {
@@ -31,17 +44,6 @@ test('a team member that has not replied yet is marked waiting in its role', () 
 test('only a working session that has not changed for the quiet time is flagged', () => {
   const rows = rowsOf(PEERS, {}, NOW, 30 * MIN)
   expect(rows.map(r => r.isQuiet)).toEqual([false, true, false])
-})
-
-test('folders to open a session in: this project, then the running sessions, then its siblings, each once', () => {
-  const options = dirOptions('/p/claude-mods', PEERS, ['/p/quorum', '/p/claude-mods', '/p/other'])
-  expect(options.map(o => o.value)).toEqual(['/p/claude-mods', '/p/quorum', '/p/mnemos', '/p/lune-voice', '/p/other'])
-  expect(options[0]).toEqual({ value: '/p/claude-mods', label: 'claude-mods (/p/claude-mods)' })
-})
-
-test('at most forty folders are offered', () => {
-  const many = Array.from({ length: 80 }, (_, i) => `/p/d${i}`)
-  expect(dirOptions('/p/root', [], many).length).toBe(40)
 })
 
 test('a wide pane puts a session on one line with a width for each column', () => {

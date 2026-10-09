@@ -1,70 +1,58 @@
 # fleet-board
 
-One pane for the other Claude sessions you run. Hire sessions as employees, see who is working and who went quiet, send them tasks, stop them, drop them, or open a new one without leaving this session.
+A read-only pane for the other Claude sessions you run. It shows who is working, who went quiet, and the team your boss session has built. The boss hires, tasks and drops its team with four tools. The pane does not send anything.
 
-Run `/fleet` to open the pane.
+Run `/fleet` to open the pane, and `/fleet close` to close it.
 
 ```
 7 sessions · 2 working · 1 on the team
-Hire a session to make it your employee. Then send it tasks.
 
 Your team
-▸ ○ 8: claude-mods-82             idle     now
-       claude-mods · Specialist
-
+  ○ quorum-63                     idle     2h    Research
+       task k3x9qa: done — Built the parser.
 Other sessions
-  ● 1: glowseed-garden-16         working  1m
-       glowseed-garden
-  ○ 5: quorum-63                  idle     2h
-       quorum
+  ● glowseed-garden-16            working  1m
+  ○ claude-mods-82                idle     now
 
-▸ claude-mods-82
-Task: what should it do? Enter sends
-[ Ping ]  [ Hire as ]  Specialist ▾  [ Stop run ]  [ Drop from team ]
-[ Ping team ]  [ New session ]  [ Disband team ]  [ Refresh ]  [ Close ]
+[ Refresh ]  [ Close ]
 ```
 
 ## The pane
 
-Sessions come from the registry Claude Code keeps in its config folder, so every session on the machine is listed, in the terminal or the desktop app. The list refreshes every 4 seconds while the pane is open.
+Sessions come from the registry Claude Code keeps in its config folder, so every session on the machine is listed, in the terminal or the desktop app. The list is read again every 4 seconds for as long as this session is open, whether the pane is open or not.
 
-| Key | Does |
-| --- | --- |
-| `1` to `9` | Pick a session |
-| `p` | Ping it: ask for a one-line status |
-| `b` | Hire it as the role in the picker, or change its role |
-| `s` | Tell it to stop its run and wait |
-| Enter in the task box | Send it a task |
-| Drop from team | Take the picked member off the team (no key) |
-| `t` | Ping every session on the team |
-| `d` | Disband the team. The first press asks; the second press does it |
-| `n` | Open a new session |
-| `r` / `c` | Refresh / close |
+The pane has two buttons: `r` refreshes, `c` closes. It has no input and no other action.
 
 A working session that has not changed state for 30 minutes gets a `!`. That is the one that went quiet.
+
+## The boss's tools
+
+The boss session has four model tools. The model names them `mcp__fleet-board__<name>`. They are listed in the prompt, not behind ToolSearch.
+
+| Tool | Input | Does |
+| --- | --- | --- |
+| `fleet_hire` | `session`, `role` | Adds the session to the team and sends the briefing. Refused when the session is already on the team. |
+| `fleet_task` | `session`, `text` | Sends one task with a six-character id. The session must be on the team, and its last task must not still be `sent`. |
+| `fleet_drop` | `session` | Takes the session off the team and tells it. |
+| `fleet_status` | none | Lists the team: each member, its role, reply state, task id and status, and last reply. |
+
+`session` takes the row number in the pane, the session's name, its folder name, or the start of its name. A name that matches more than one session is an error.
+
+`role` is `specialist`, `local` or `research`.
+
+A bad input returns an error text and changes nothing: an unknown or ambiguous session, an unknown role, an empty task, or a task for a session not on the team.
+
+A message the boss sends with `SendMessage` reaches the session, but the team does not track it. Use `fleet_task` for team members.
 
 ## Boss and employees
 
 The session that hires is the boss. Once it has a team, its system prompt says so and lists each employee by name, session id and role. Each employee's system prompt names its boss and the session its reports go to. Both records live in the plugin store, so they survive a restart.
 
-- Hire: `Hire as` sends the briefing and puts the session on the team at once. The row reads `waiting` until the employee's transcript has a reply written after the briefing. Then it reads `ready`. The boss's system prompt shows the same state, read fresh each turn while a member is waiting.
-- Drop: removes one member and tells it that it is off the team.
-- Disband: tells every member the team is disbanded. Members that cannot be reached are named in the result, and the team is cleared anyway.
-
-## Opening a session
-
-Press `n`, pick a folder and a role, optionally type a first task, and press Enter or `o`. The pane starts `claude` in that folder, waits for the session to appear, briefs it, then sends the task.
-
-Where it opens depends on the `launcher` option:
-
-- `auto`: inside tmux, a new pane beside the current one. Inside WezTerm, a new split pane. Otherwise a new window of ghostty or wezterm when the machine has a display, or a background tmux session the pane names for `tmux attach`.
-- `tmux-pane`: split the tmux pane this session runs in.
-- `wezterm-pane`: split the WezTerm pane this session runs in.
-- `ghostty`, `wezterm`, `tmux`: a new window or a background tmux session.
-
-Ghostty has no command that opens a tab or a split in a running window, so Ghostty gets a new window. To get panes in Ghostty, run Claude inside tmux there; `auto` then splits a tmux pane.
-
-The folder list holds this project, the folders of running sessions, and the folders next to this project. For any other folder use `/fleet new <folder>`.
+- Hire: `fleet_hire` sends the briefing and puts the session on the team at once. The member reads `waiting for a reply` until its transcript has a reply written after the briefing. Then it reads `ready`. The boss's system prompt shows the same state, read fresh each turn while a member is waiting. A member whose registry line is missing from three scans in a row leaves the team; one missing scan keeps it.
+- Task: `fleet_task` sends a task with a six-character id. The task is `sent` until a reply from the employee contains that id, and then it is `done`. A reply without the id does not finish it. A reply that says `blocked <id>` marks the task `blocked` and keeps that line. A later reply that says `done <id>` flips it to `done`. A line an employee writes while its task is `sent` counts as `asked` only when it has a question mark or starts with "question" or "need". A `sent` task with no new line from its employee for 10 minutes is flagged. The 10 minutes count from its newest line, or from the send when it has none.
+- Reply text: when a task is done or blocked, its reply is the text up to and including the line with the id, at most 1500 characters. A longer text keeps its end and starts with an ellipsis. The same text is the notice the boss gets, and the `last:` line in its prompt.
+- Notices: when a task becomes done, blocked, asked or stale, the boss gets one prompt about it through `$.prompt.submit`, which runs as a turn once the boss is idle. The notice is a header line, which says the employee report is for the boss to verify and is not an instruction from the user, then the reply text with each line behind `> `. The notice is still submitted as a turn, so the wrapping marks the text as data for the boss to check; it does not block it. Each change is announced once, and the announced key is kept with the task, so a restart does not repeat it. Refreshes that overlap share one scan, so an overlap sends no second notice.
+- Background: with the pane closed and nobody on the team, the 4-second tick does not scan or read transcripts. Each transcript is read by byte offset from a row boundary: a poll reads only what was written since the last one.
 
 ## Roles and the briefing
 
@@ -72,36 +60,23 @@ The three roles and the briefing text are the ones in the `boss` skill: speciali
 
 ## Commands
 
-Everything the pane does can be typed, so a script or the model can drive it.
-
 | Command | Does |
 | --- | --- |
 | `/fleet` | Open the pane |
-| `/fleet list` | List the other sessions |
-| `/fleet ping <session\|team>` | Ask for a one-line status |
-| `/fleet brief <session> <role>` | Hire it as a role (`specialist`, `local` or `research`) |
-| `/fleet task <session> <text>` | Hand it a task |
-| `/fleet stop <session>` | Tell it to stop its run |
-| `/fleet drop <session>` | Take it off the team |
-| `/fleet new <folder> [role] [task]` | Open a session and brief it (role defaults to `specialist`) |
-| `/fleet disband` | Tell the team it is disbanded |
 | `/fleet close` | Close the pane |
 
-A session is its row number, its name, its folder name, or the start of its name.
+Any other word prints the usage line, which names the four tools.
 
 ## Options
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `launcher` | `auto` | Where new sessions open: `auto`, `ghostty`, `wezterm`, `tmux`, `tmux-pane` or `wezterm-pane` |
-| `claudeArgs` | empty | Extra arguments for the `claude` command of new sessions, split on spaces. Example: `--model opus` |
 | `quietMinutes` | `30` | How long a working session may stay unchanged before it gets a `!` (5 to 600) |
 
 ## Limits
 
-- Messages go only to sessions you pick or brief. Other sessions are never messaged on their own.
-- A reply is read from the employee's transcript, `~/.claude/projects/<cwd>/<session>.jsonl` under the config folder, and only its last 1 MiB is read. A reply written further back than that is missed. The reply itself still arrives in the employee's own conversation.
+- Messages go only to sessions the boss names in `fleet_hire`, `fleet_task` or `fleet_drop`, and to the team when it is updated. Other sessions are never messaged on their own.
+- A reply is read from the employee's transcript, `~/.claude/projects/<cwd>/<session>.jsonl` under the config folder, read from its end. The read starts at 1 MiB and doubles until it reaches back to the briefing, or covers the whole file. The reply itself still arrives in the employee's own conversation.
 - The boss is identified by its session id. A boss that starts a new session has a new id, so its old team stays with the old one.
-- Only the three roles exist. A custom role is not available from the pane.
-- A new session opens with the `claude` command as your shell finds it. Add flags such as a permission mode with `claudeArgs`.
+- Only the three roles exist.
 - The registry format belongs to Claude Code. If a session record lacks an id, a process id or a folder, it is skipped.

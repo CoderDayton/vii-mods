@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { briefing, PING, ROLES, roleOf, STOP, taskMessage } from '../src/roles'
+import { briefing, DROP, ROLES, roleOf, taskMessage } from '../src/roles'
 
 test('there are three roles, each with a short id, a label and a job', () => {
   expect(ROLES.map(r => r.id)).toEqual(['specialist', 'local', 'research'])
@@ -25,8 +25,9 @@ test('the briefing names the boss, the role and its job, and asks for "ready"', 
   expect(text).toContain("If the user tells you something different in your own session, follow the user.")
 })
 
-test('a task, a ping and a stop are plain messages from the boss', () => {
-  expect(taskMessage('boss-1', 'Add tests for the parser.')).toBe('Task from boss-1: Add tests for the parser.')
-  expect(PING).toBe('Status? One line: done, running or blocked, and what you are on.')
-  expect(STOP).toBe('Stop your current run and wait for my next message.')
+test('a task is a plain message from the boss, and a drop tells the member it is off the team', () => {
+  expect(taskMessage('boss-1', 'k3x9qa', 'Add tests for the parser.')).toBe(
+    'Task from boss-1 (id k3x9qa): Add tests for the parser.\nPut the full report in your final reply, not in a separate message to the boss. End it with "done k3x9qa" or "blocked k3x9qa".',
+  )
+  expect(DROP).toBe('You are off the team. Go back to what the user tells you.')
 })

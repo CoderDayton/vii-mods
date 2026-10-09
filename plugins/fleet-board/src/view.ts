@@ -2,6 +2,7 @@ import { baseName, fmtAge } from './peers'
 import type { Peer, PeerState } from './peers'
 import { roleOf } from './roles'
 import type { Hire } from './fleet'
+import { lineOf } from './transcript'
 
 export type Row = {
   n: number
@@ -12,6 +13,9 @@ export type Row = {
   age: string
   isQuiet: boolean
   role: string
+  // The team member's task, as "task <id>: <status>", and the first line of its reply. Empty when there is none.
+  task: string
+  last: string
 }
 
 // A team member is marked waiting until its transcript shows a reply to its briefing.
@@ -20,6 +24,10 @@ const roleText = (hire: Hire | undefined): string => {
   if (label === undefined) return '—'
   return hire?.readyAt === undefined ? `${label} · waiting` : label
 }
+
+const taskText = (hire: Hire | undefined): string => (hire?.task === undefined ? '' : `task ${hire.task.id}: ${hire.task.status}`)
+
+const lastText = (hire: Hire | undefined): string => (hire?.task?.last === undefined ? '' : lineOf(hire.task.last))
 
 // A working session that has not changed state for the quiet time is the one to look at.
 export const rowsOf = (peers: readonly Peer[], roster: Readonly<Record<string, Hire>>, now: number, quietMs: number): Row[] =>
@@ -35,18 +43,20 @@ export const rowsOf = (peers: readonly Peer[], roster: Readonly<Record<string, H
       age: fmtAge(since),
       isQuiet: p.state === 'working' && since > quietMs,
       role: roleText(hire),
+      task: taskText(hire),
+      last: lastText(hire),
     }
   })
 
 export type Layout = { wide: boolean; name: number; folder: number; age: number }
 
-// "1: " in front of a name, the way a plain Button draws its hotkey.
+// The indent of the detail lines under a session row, and the room the name column keeps for it.
 export const KEY_WIDTH = 3
 const WIDE_AT = 90
 const NAME_MAX = 24
 const FOLDER_MAX = 18
 const NAME_MIN = 12
-// Pane padding, the pick mark, the state dot, the state word, and the gaps between those cells.
+// Pane padding, the state dot, the state word, and the gaps between those cells.
 const NARROW_FIXED = 15
 
 const widthOf = (cells: string[], max: number): number => Math.min(max, Math.max(1, ...cells.map(c => c.length)))
@@ -59,13 +69,6 @@ export const layoutOf = (columns: number, rows: readonly Row[]): Layout => {
   }
   return { wide: false, name: Math.max(NAME_MIN, columns - NARROW_FIXED - age), folder: 0, age }
 }
-
-const DIRS_KEPT = 40
-
-export const dirOptions = (root: string, peers: readonly Peer[], siblings: readonly string[]): { value: string; label: string }[] =>
-  [...new Set([root, ...peers.map(p => p.dir), ...siblings])]
-    .slice(0, DIRS_KEPT)
-    .map(dir => ({ value: dir, label: `${baseName(dir)} (${dir})` }))
 
 export const headline = (rows: readonly Row[]): string => {
   if (rows.length === 0) return 'no other sessions'

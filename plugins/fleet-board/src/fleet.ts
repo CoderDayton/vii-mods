@@ -1,19 +1,17 @@
-import { describeLauncher, launchArgv, parseProbe, pickLauncher, PROBE_ARGV, splitArgs } from './launch'
-import type { LauncherOption } from './launch'
-import { baseName, parsePeers, SCAN_ARGV } from './peers'
+import { parsePeers, SCAN_ARGV } from './peers'
 import type { Peer } from './peers'
-import { briefing, DISBAND, DROP, PING, STOP, taskMessage } from './roles'
+import { briefing, DROP, taskMessage } from './roles'
 import type { Role } from './roles'
-import { bossLabel, hireKey } from './team'
-import type { Hire, Note } from '../types'
+import { bossLabel, hireKey, noticeOf } from './team'
+import type { Hire, Note, Task } from '../types'
+import { lineOf, replyOf } from './transcript'
+import type { Text } from './transcript'
 
-// What the pane and the /fleet command do. Both go through here, so a button and a typed command act alike.
+// What the pane and the boss's fleet tools do. Both go through here, so a tool and the pane act alike.
 
 export type { Hire, Note }
 
 export type Result = { ok: boolean; text: string }
-
-export type Config = { launcher: LauncherOption; claudeArgs: string; quietMs: number; waitMs: number }
 
 export type Box<T> = { get: () => Promise<T>; set: (fn: (v: T) => T) => Promise<void> }
 
@@ -22,11 +20,15 @@ export type Io = {
   // Null when the message was delivered, otherwise why not.
   send: (id: string, text: string) => Promise<string | null>
   now: () => Promise<number>
-  sleep: (ms: number) => Promise<void>
-  exists: (path: string) => Promise<boolean>
   selfId: () => Promise<string>
   // The time of the session's first reply at or after `since`, or null while it has not replied.
   reply: (peer: Peer, since: number) => Promise<number | null>
+  // Every text the session wrote at or after `since`, in order.
+  texts: (peer: Peer, since: number) => Promise<Text[]>
+  // Drops the transcript cursor kept for one `since`, or every one for the session when `since` is not given.
+  forget: (dir: string, id: string, since?: number) => void
+  // Queues a prompt for the boss session, which runs it as a turn once the session is idle.
+  prompt: (text: string) => Promise<void>
   store: {
     set: (key: string, value: unknown) => Promise<void>
     delete: (key: string) => Promise<void>
@@ -39,32 +41,88 @@ export type Io = {
   }
 }
 
-export type OpenRequest = { dir: string; role: Role; task: string }
-
 const NOTES_KEPT = 6
-const POLL_MS = 1000
 
-const trimSlash = (dir: string): string => (dir.length > 1 ? dir.replace(/\/+$/, '') : dir)
+// A member is dropped after this many scans in a row without its registry line. One missing scan can be a
+// registry file caught mid-write.
+const MISSES_BEFORE_DROP = 3
 
-const slug = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20)
+// A six-character id for a task, which the employee's reply echoes.
+const newTaskId = (): string => Math.floor(Math.random() * 36 ** 6).toString(36).padStart(6, '0')
 
 const without = (roster: Record<string, Hire>, id: string): Record<string, Hire> =>
   Object.fromEntries(Object.entries(roster).filter(([key]) => key !== id))
+
+const withTask = (roster: Record<string, Hire>, id: string, task: Task): Record<string, Hire> => {
+  const hire = roster[id]
+  return hire === undefined ? roster : { ...roster, [id]: { ...hire, task } }
+}
+
+const markTask = (roster: Record<string, Hire>, id: string, patch: Partial<Task>): Record<string, Hire> => {
+  const hire = roster[id]
+  return hire?.task === undefined ? roster : { ...roster, [id]: { ...hire, task: { ...hire.task, ...patch } } }
+}
 
 const markReady = (roster: Record<string, Hire>, id: string, at: number): Record<string, Hire> => {
   const hire = roster[id]
   return hire === undefined ? roster : { ...roster, [id]: { ...hire, readyAt: at } }
 }
 
-export const createFleet = (io: Io, config: Config) => {
+// Drops each member that has been missing from `alive` for MISSES_BEFORE_DROP scans in a row. A scan that finds the
+// member resets its count.
+const dropMissing = async (io: Io, misses: Map<string, number>, alive: Set<string>): Promise<void> => {
+  for (const [id, hire] of Object.entries(await io.state.roster.get())) {
+    if (alive.has(id)) {
+      misses.delete(id)
+      continue
+    }
+    const count = (misses.get(id) ?? 0) + 1
+    if (count < MISSES_BEFORE_DROP) {
+      misses.set(id, count)
+      continue
+    }
+    misses.delete(id)
+    await io.store.delete(hireKey(id))
+    io.forget(hire.dir, id)
+    await io.state.roster.set(roster => without(roster, id))
+  }
+}
+
+// Reads what the employee wrote since the task was sent. The newest done or blocked echo decides the status, so a
+// blocked reply that a later done reply follows is read as done. Otherwise the newest line is kept with its time.
+const readTask = async (io: Io, peer: Peer, id: string, task: Task): Promise<void> => {
+  const texts = await io.texts(peer, task.sentAt)
+  const finish = new RegExp(`\\b(done|blocked)\\s+${task.id}\\b`, 'i')
+  const echo = [...texts].reverse().find(t => finish.test(t.text))
+  const newest = texts[texts.length - 1]
+  if (echo !== undefined) {
+    const blocked = new RegExp(`\\bblocked\\s+${task.id}\\b`, 'i').test(echo.text)
+    const status = blocked ? 'blocked' : 'done'
+    const blocker = blocked ? lineOf(echo.text) : undefined
+    const last = replyOf(echo.text, finish)
+    // Written only on a change, so a task that stays blocked costs no roster write on each sweep.
+    if (status !== task.status || blocker !== task.blocker || last !== task.last) {
+      await io.state.roster.set(roster => markTask(roster, id, { status, blocker, last }))
+    }
+    // The cursor is kept while the task is blocked: a later "done" reply is read from it.
+    if (status === 'done') io.forget(peer.dir, peer.id, task.sentAt)
+  } else if (task.status === 'sent' && newest !== undefined && (replyOf(newest.text) !== task.last || newest.at !== task.lastAt)) {
+    await io.state.roster.set(roster => markTask(roster, id, { last: replyOf(newest.text), lastAt: newest.at }))
+  }
+}
+
+export const createFleet = (io: Io) => {
   const note = async (ok: boolean, text: string): Promise<Result> => {
     const at = await io.now()
     await io.state.notes.set(notes => [...notes, { ok, text, at }].slice(-NOTES_KEPT))
     return { ok, text }
   }
 
+  // Scans in a row without a member's registry line, by member id. Reset by any scan that finds the member.
+  const misses = new Map<string, number>()
+
   // A scan that fails keeps the team and the list as they were; only a scan that ran can say who is gone.
-  const refresh = async (): Promise<Peer[]> => {
+  const sweep = async (): Promise<Peer[]> => {
     const self = await io.selfId()
     const scan = await io.run(SCAN_ARGV)
     if (scan.exitCode !== 0) return io.state.peers.get()
@@ -75,32 +133,55 @@ export const createFleet = (io: Io, config: Config) => {
       .filter(p => p.id !== self)
       .sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id))
     await io.state.peers.set(() => peers)
-    const alive = new Set(peers.map(p => p.id))
-    for (const id of Object.keys(await io.state.roster.get())) {
-      if (!alive.has(id)) await io.store.delete(hireKey(id))
-    }
-    await io.state.roster.set(roster => Object.fromEntries(Object.entries(roster).filter(([id]) => alive.has(id))))
+    await dropMissing(io, misses, new Set(peers.map(p => p.id)))
     for (const [id, hire] of Object.entries(await io.state.roster.get())) {
       const peer = peers.find(p => p.id === id)
       if (hire.readyAt !== undefined || peer === undefined) continue
       const at = await io.reply(peer, hire.briefedAt)
-      if (at !== null) await io.state.roster.set(roster => markReady(roster, id, at))
+      if (at !== null) {
+        await io.state.roster.set(roster => markReady(roster, id, at))
+        io.forget(peer.dir, peer.id, hire.briefedAt)
+      }
+    }
+    const now = await io.now()
+    for (const [id, hire] of Object.entries(await io.state.roster.get())) {
+      const peer = peers.find(p => p.id === id)
+      const task = hire.task
+      if (task === undefined) continue
+      if (task.status !== 'done' && peer !== undefined) await readTask(io, peer, id, task)
+      const current = (await io.state.roster.get())[id]?.task
+      const notice = current === undefined ? null : noticeOf(hire.name, current, now)
+      if (notice !== null && current?.announced !== notice.key) {
+        // Marked only once the boss has the notice. A failure is noted in the pane and the next refresh sends it again.
+        try {
+          await io.prompt(notice.text)
+        } catch (error) {
+          await note(false, `could not tell the boss about ${hire.name}: ${error instanceof Error ? error.message : String(error)}`)
+          continue
+        }
+        await io.state.roster.set(roster => markTask(roster, id, { announced: notice.key }))
+      }
     }
     return peers
   }
 
-  const tell = async (peer: Peer, text: string, done: string): Promise<Result> => {
-    const why = await io.send(peer.id, text)
-    return why === null ? note(true, done) : note(false, `could not reach ${peer.name}: ${why}`)
+  // Callers that arrive while a sweep runs share its result, so two sweeps never announce the same notice.
+  let running: Promise<Peer[]> | undefined
+  const refresh = (): Promise<Peer[]> => {
+    running ??= sweep().finally(() => {
+      running = undefined
+    })
+    return running
   }
-
-  const ping = (peer: Peer) => tell(peer, PING, `asked ${peer.name} for status`)
-
-  const stop = (peer: Peer) => tell(peer, STOP, `told ${peer.name} to stop its run`)
 
   const task = async (peer: Peer, text: string): Promise<Result> => {
     if (text.trim() === '') return { ok: false, text: 'type the task first' }
-    return tell(peer, taskMessage(await io.state.boss.get(), text.trim()), `sent ${peer.name} a task`)
+    const id = newTaskId()
+    const why = await io.send(peer.id, taskMessage(await io.state.boss.get(), id, text.trim()))
+    if (why !== null) return note(false, `could not reach ${peer.name}: ${why}`)
+    const sentAt = await io.now()
+    await io.state.roster.set(roster => withTask(roster, peer.id, { id, sentAt, status: 'sent' }))
+    return note(true, `sent ${peer.name} a task`)
   }
 
   const brief = async (peer: Peer, role: Role): Promise<Result> => {
@@ -121,80 +202,13 @@ export const createFleet = (io: Io, config: Config) => {
     const why = await io.send(peer.id, DROP)
     await io.state.roster.set(roster => without(roster, peer.id))
     await io.store.delete(hireKey(peer.id))
+    misses.delete(peer.id)
+    io.forget(peer.dir, peer.id)
     if (why !== null) return note(false, `dropped ${peer.name} from the team, but could not tell it: ${why}`)
     return note(true, `dropped ${peer.name} from the team`)
   }
 
-  const team = async (): Promise<Peer[]> => {
-    const roster = await io.state.roster.get()
-    return (await io.state.peers.get()).filter(p => roster[p.id] !== undefined)
-  }
-
-  const pingTeam = async (): Promise<Result> => {
-    const members = await team()
-    if (members.length === 0) return note(false, 'nobody is on the team yet; brief a session first')
-    const failed: string[] = []
-    for (const p of members) if ((await io.send(p.id, PING)) !== null) failed.push(p.name)
-    const noun = members.length === 1 ? 'session' : 'sessions'
-    return failed.length === 0
-      ? note(true, `asked ${members.length} ${noun} for status`)
-      : note(false, `asked ${members.length - failed.length} of ${members.length} ${noun}; could not reach ${failed.join(', ')}`)
-  }
-
-  // Every member is cleared, reached or not. The result names the ones that were not reached.
-  const disband = async (): Promise<Result> => {
-    const members = await team()
-    if (members.length === 0) return note(false, 'nobody is on the team')
-    const failed: string[] = []
-    for (const p of members) if ((await io.send(p.id, DISBAND)) !== null) failed.push(p.name)
-    for (const id of Object.keys(await io.state.roster.get())) await io.store.delete(hireKey(id))
-    await io.state.roster.set(() => ({}))
-    return failed.length === 0
-      ? note(true, `disbanded the team of ${members.length}`)
-      : note(false, `disbanded the team of ${members.length}; could not reach ${failed.join(', ')}`)
-  }
-
-  const waitFor = async (known: ReadonlySet<string>, dir: string): Promise<Peer | undefined> => {
-    const tries = Math.max(1, Math.ceil(config.waitMs / POLL_MS))
-    for (let i = 0; i < tries; i++) {
-      await io.sleep(POLL_MS)
-      const found = (await refresh()).find(p => !known.has(p.id) && trimSlash(p.dir) === dir)
-      if (found !== undefined) return found
-    }
-    return undefined
-  }
-
-  const open = async ({ dir: given, role, task: first }: OpenRequest): Promise<Result> => {
-    const dir = trimSlash(given.trim())
-    if (!dir.startsWith('/')) return note(false, 'the folder must be an absolute path')
-    if (!(await io.exists(dir))) return note(false, `${dir} is not a folder`)
-    const probe = parseProbe((await io.run(PROBE_ARGV)).stdout)
-    const launcher = pickLauncher(config.launcher, probe)
-    if (launcher === null) return note(false, `no terminal window or tmux found to open a session in (launcher: ${config.launcher})`)
-
-    const known = new Set((await refresh()).map(p => p.id))
-    const tag = `fleet-${slug(baseName(dir)) || 'session'}-${(await io.now()).toString(36).slice(-4)}`
-    const started = await io.run(launchArgv(launcher, dir, splitArgs(config.claudeArgs), tag, probe))
-    if (started.exitCode !== 0) {
-      const why = started.stderr.split('\n')[0]?.trim() || `exit code ${started.exitCode}`
-      return note(false, `could not start ${launcher}: ${why}`)
-    }
-
-    const hint = launcher === 'tmux' ? `; see it with: tmux attach -t ${tag}` : ''
-    const peer = await waitFor(known, dir)
-    if (peer === undefined) {
-      return note(false, `started ${launcher} in ${dir}, but the session has not appeared after ${Math.round(config.waitMs / 1000)} s${hint}`)
-    }
-    const briefed = await brief(peer, role)
-    if (!briefed.ok) return note(false, `opened ${peer.name}, but ${briefed.text}`)
-    if (first.trim() !== '') {
-      const sent = await task(peer, first)
-      if (!sent.ok) return note(false, `opened ${peer.name}, but ${sent.text}`)
-    }
-    return note(true, `opened ${peer.name} in ${describeLauncher(launcher)} as ${role.label}${hint}`)
-  }
-
-  return { refresh, ping, stop, task, brief, drop, pingTeam, disband, open, team, note }
+  return { refresh, task, brief, drop, note }
 }
 
 export type Fleet = ReturnType<typeof createFleet>
