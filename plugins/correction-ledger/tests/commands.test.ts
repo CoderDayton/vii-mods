@@ -13,14 +13,17 @@ const rule = (id: number, over: Partial<Rule> = {}): Rule => ({
   at: NOW - 3 * DAY,
   last: NOW - 3 * DAY,
   strikes: 0,
+  life: 'project',
+  seen: 0,
   ...over,
 })
 
 const ctx = (rules: Rule[] = [], enabled = true) => ({
-  ledger: { next: 50, rules } as Ledger,
+  ledger: { next: 50, rules, days: 5, day: Math.floor(NOW / DAY) } as Ledger,
   enabled,
   now: NOW,
   max: 12,
+  lives: { task: 2, project: 14 },
 })
 
 test('an empty ledger says how a rule gets in', () => {
@@ -36,6 +39,26 @@ test('the list shows each rule with its number, its breaks and what the user sai
   expect(r.text).toContain('#3  [broken 2×] 2nd cat: no ProximityPrompt.')
   expect(r.text).toContain('you said 1')
   expect(r.text).toContain('3d ago')
+})
+
+test('the list says how long each rule has left', () => {
+  const r = runRules('', ctx([rule(1, { seen: 5 }), rule(2, { life: 'task', seen: 4 }), rule(3, { life: 'kept' })]))
+  expect(r.text).toContain('3d ago · 14 worked days left')
+  expect(r.text).toContain('3d ago · 1 worked day left')
+  expect(r.text).toContain('3d ago · kept')
+})
+
+test('the list says what a rule fires on', () => {
+  const r = runRules('', ctx([rule(1, { seen: 5, when: { tool: 'Bash', words: ['git', 'commit'] } })]))
+  expect(r.text).toContain('3d ago · 14 worked days left · fires on Bash: git commit')
+})
+
+test('keep stops a rule from running out', () => {
+  const r = runRules('keep 2', ctx([rule(1), rule(2, { life: 'task' })]))
+  expect(r.ledger?.rules.map(x => x.life)).toEqual(['project', 'kept'])
+  expect(r.text).toBe('Kept #2: rule 2')
+  expect(runRules('keep 9', ctx([rule(1)])).text).toBe('No rule #9.')
+  expect(runRules('keep', ctx([rule(1)])).text).toContain('Usage: /rules keep <number>')
 })
 
 test('a rule broken three times is told it needs more than a reminder', () => {
@@ -69,7 +92,7 @@ test('clear empties the ledger and counts what went', () => {
 
 test('add saves a rule by hand', () => {
   const r = runRules('add never use var', ctx())
-  expect(r.ledger?.rules).toMatchObject([{ id: 50, text: 'never use var', quote: 'added by hand', strikes: 0 }])
+  expect(r.ledger?.rules).toMatchObject([{ id: 50, text: 'never use var', quote: 'added by hand', strikes: 0, life: 'kept' }])
   expect(r.text).toBe('Saved #50: never use var')
 })
 

@@ -16,7 +16,7 @@ import type { Ledger } from '../src/rules'
 const DIR = '/cfg/plugins/correction-ledger'
 const NOW = 1_000
 
-const draft = (text: string) => ({ text, quote: '', now: NOW })
+const draft = (text: string) => ({ text, quote: '', now: NOW, life: 'project' as const })
 
 // A disk whose swap script behaves as the real one: replace only if the file still holds OLD.
 const fakeDisk = (files = new Map<string, string>(), beforeSwap: () => void = () => undefined) => {

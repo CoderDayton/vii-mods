@@ -14,7 +14,8 @@ const RULE = '2nd cat: no ProximityPrompt. It loops its path.'
 const usage = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 const answer = (text: string) => ({ value: { isAnswered: true as const, text, usage } })
 const gaveUp = () => ({ value: { isAnswered: false as const, reason: 'aborted' } }) as never
-const newRule = (rule = RULE) => answer(JSON.stringify({ verdict: 'new', rule }))
+const newRule = (rule = RULE, lasts = 'project') => answer(JSON.stringify({ verdict: 'new', lasts, rule }))
+const DAY = 86_400_000
 
 type Reply = ReturnType<typeof answer> | Promise<never> | ReturnType<typeof gaveUp>
 
@@ -29,6 +30,8 @@ const world = (on: Parameters<typeof mock.clock>[0], reply: (prompt: string) => 
     hasRepo: true,
     beforeSwap: () => undefined as void,
     last: 'I added a ProximityPrompt to the second cat.',
+    uses: [] as { tool_use_id: string; tool: string; input: Record<string, unknown> }[],
+    ran: [] as string[],
   }
   const ok = (stdout = '', exitCode = 0) => ({
     value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
@@ -41,6 +44,8 @@ const world = (on: Parameters<typeof mock.clock>[0], reply: (prompt: string) => 
   on('session.messages', () => ({
     value: [
       { role: 'user', text: 'add the second cat', toolUses: [] },
+      { role: 'assistant', text: '', toolUses: w.uses },
+      { role: 'user', text: '', toolUses: [], toolResults: [] },
       { role: 'assistant', text: w.last, toolUses: [] },
     ],
   }) as never)
@@ -82,6 +87,10 @@ const world = (on: Parameters<typeof mock.clock>[0], reply: (prompt: string) => 
     w.toasts.push(e.text)
     return { value: undefined }
   })
+  on('tool.call', (_$, e) => {
+    w.ran.push(String((e as { command?: string }).command ?? e.tool))
+    return { result: 'ran' } as never
+  })
   on('prompt.submit', (_$, e) => ({ text: e.text }))
   on('prompt.compose', () => ({ sections: [] }))
   return w
@@ -95,7 +104,7 @@ const settle = async (w: ReturnType<typeof world>) => {
 
 const COMPOSE = { model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] } as never
 const slash = (args: string) => ({ command: 'rules', args }) as never
-const draft = (text: string) => ({ text, quote: '', now: 1 })
+const draft = (text: string, life: 'task' | 'project' = 'project') => ({ text, quote: '', now: 1, life })
 const put = (w: ReturnType<typeof world>, ledger: Ledger, cwd = '/work') => w.files.set(ledgerPathOf(DIR, cwd), JSON.stringify(ledger))
 const saved = (w: ReturnType<typeof world>, cwd = '/work') => {
   const text = w.files.get(ledgerPathOf(DIR, cwd))
@@ -140,6 +149,180 @@ test('a prompt that is not a correction never reaches the model', async ($, on) 
   await submit($, '/rules')
   await settle(w)
   expect(w.requests.length).toBe(0)
+  expect(w.swaps).toBe(0)
+})
+
+test('a correction that only matters for the job in hand is saved as a task rule', async ($, on) => {
+  const w = world(on, () => newRule(RULE, 'task'))
+  await $.session.start(LIVE)
+  await submit($, SAID)
+  await settle(w)
+  expect(saved(w)?.rules).toMatchObject([{ id: 1, life: 'task' }])
+  expect(w.toasts).toEqual([`correction-ledger: saved rule #1 for this task: ${RULE} (/rules rm 1 to undo, /rules keep 1 to keep)`])
+})
+
+test('a task rule goes by itself after two days of work, and a toast says so', async ($, on) => {
+  const w = world(on)
+  put(w, addRule(addRule(emptyLedger(), draft('stop after the first epoch', 'task'), 12), draft(RULE), 12))
+  await $.session.start(LIVE)
+  await w.clock.advance(DAY)
+  await submit($, 'add a login page')
+  expect(saved(w)?.rules.length).toBe(2)
+  await w.clock.advance(9 * DAY)
+  await submit($, 'add a logout page')
+  expect(saved(w)?.rules.map(r => r.text)).toEqual([RULE])
+  expect(w.toasts).toEqual(['correction-ledger: rule #1 expired: stop after the first epoch'])
+  const composed = await $.prompt.compose(COMPOSE)
+  expect(composed.sections[0]?.text).not.toContain('first epoch')
+  expect(w.requests.length).toBe(0)
+})
+
+const ASK = 'stop committing without asking me first'
+const ASKED = 'Never commit without asking me first.'
+const WHEN = { tool: 'Bash', words: ['git', 'commit'] }
+const COMMIT_USE = { tool_use_id: 'u1', tool: 'Bash', input: { command: 'git commit -m "add the cat"' } }
+const bash = (command: string) => ({ tool: 'Bash', tool_use_id: 't', command }) as never
+const triggered = () => answer(JSON.stringify({ verdict: 'new', lasts: 'project', rule: ASKED, when: WHEN }))
+
+test('a rule about one action is saved with the call it fires on, and is not sent every turn', async ($, on) => {
+  const w = world(on, triggered)
+  w.uses = [COMMIT_USE]
+  await $.session.start(LIVE)
+  await submit($, ASK)
+  await settle(w)
+  expect(w.requests[0]?.prompt).toContain('Bash: git commit -m "add the cat"')
+  expect(saved(w)?.rules).toMatchObject([{ id: 1, text: ASKED, when: WHEN }])
+  expect(w.toasts).toEqual([`correction-ledger: saved rule #1: ${ASKED} [fires on Bash: git commit] (/rules rm 1 to undo)`])
+  expect(await hasSection($)).toBe(false)
+})
+
+test('a rule that fires reminds Claude after the call, once a turn', async ($, on) => {
+  const w = world(on, triggered)
+  w.uses = [COMMIT_USE]
+  await $.session.start(LIVE)
+  await submit($, ASK)
+  await settle(w)
+  const first = (await $.tool.call(bash('git commit -m again'))) as { context?: string[] }
+  expect(w.ran).toEqual(['git commit -m again'])
+  expect(first.context?.join('\n')).toContain(`- ${ASKED}`)
+  const second = (await $.tool.call(bash('git commit -m more'))) as { context?: string[] }
+  expect(second.context).toBeUndefined()
+  expect(((await $.tool.call(bash('git status'))) as { context?: string[] }).context).toBeUndefined()
+  await submit($, 'add a login page')
+  const next = (await $.tool.call(bash('git commit -m more'))) as { context?: string[] }
+  expect(next.context?.join('\n')).toContain(`- ${ASKED}`)
+})
+
+test('a rule that was broken before blocks the call once, and lets the same call through next', async ($, on) => {
+  const w = world(on)
+  const l = addRule(emptyLedger(), { ...draft(ASKED), when: WHEN }, 12)
+  put(w, { ...l, rules: l.rules.map(r => ({ ...r, strikes: 1 })) })
+  await $.session.start(LIVE)
+  await $.prompt.compose(COMPOSE)
+  const blocked = (await $.tool.call(bash('git commit -m x'))) as { deny?: string }
+  expect(blocked.deny).toContain(`- [broken 1×] ${ASKED}`)
+  expect(w.ran).toEqual([])
+  expect(((await $.tool.call(bash('git status'))) as { deny?: string }).deny).toBeUndefined()
+  const again = (await $.tool.call(bash('git commit -m x'))) as { deny?: string }
+  expect(again.deny).toBeUndefined()
+  expect(w.ran).toEqual(['git status', 'git commit -m x'])
+  expect(((await $.tool.call(bash('git commit -m y'))) as { deny?: string }).deny).toContain(ASKED)
+})
+
+const struck = (w: ReturnType<typeof world>) => {
+  const l = addRule(emptyLedger(), { ...draft(ASKED), when: WHEN }, 12)
+  put(w, { ...l, rules: l.rules.map(r => ({ ...r, strikes: 1 })) })
+}
+
+test('a stopped call runs when it is made again on the user’s next prompt', async ($, on) => {
+  const w = world(on)
+  struck(w)
+  await $.session.start(LIVE)
+  await $.prompt.compose(COMPOSE)
+  expect(((await $.tool.call(bash('git commit -m x'))) as { deny?: string }).deny).toContain(ASKED)
+  await submit($, 'yes go ahead')
+  expect(((await $.tool.call(bash('git commit -m x'))) as { deny?: string }).deny).toBeUndefined()
+  expect(w.ran).toEqual(['git commit -m x'])
+})
+
+test('a stopped call that was dropped is stopped again later', async ($, on) => {
+  const w = world(on)
+  struck(w)
+  await $.session.start(LIVE)
+  await $.prompt.compose(COMPOSE)
+  expect(((await $.tool.call(bash('git commit -m x'))) as { deny?: string }).deny).toContain(ASKED)
+  await submit($, 'add a login page')
+  await submit($, 'add a logout page')
+  expect(((await $.tool.call(bash('git commit -m x'))) as { deny?: string }).deny).toContain(ASKED)
+  expect(w.ran).toEqual([])
+})
+
+test('saying a rule again on the day it runs out is a strike, not the end of the rule', async ($, on) => {
+  const w = world(on, () => answer('{"verdict":"repeat","id":1}'))
+  put(w, addRule(emptyLedger(), draft(RULE, 'task'), 12))
+  await $.session.start(LIVE)
+  await w.clock.advance(DAY)
+  await submit($, 'add a login page')
+  await w.clock.advance(DAY)
+  await submit($, SAID)
+  await settle(w)
+  expect(saved(w)?.rules).toMatchObject([{ id: 1, text: RULE, strikes: 1 }])
+  expect(saved(w)).toMatchObject({ days: 2 })
+  expect(w.toasts).toEqual([`correction-ledger: rule #1 broken again (1×): ${RULE}`])
+})
+
+test('a rule that fires counts as used, so it does not run out', async ($, on) => {
+  const w = world(on)
+  put(w, addRule(emptyLedger(), { ...draft(ASKED, 'task'), when: WHEN }, 12))
+  await $.session.start(LIVE)
+  for (let day = 1; day <= 6; day++) {
+    await w.clock.advance(DAY)
+    await submit($, 'add a login page')
+    await $.prompt.compose(COMPOSE)
+    await $.tool.call(bash('git commit -m x'))
+    await settle(w)
+  }
+  expect(saved(w)?.rules).toMatchObject([{ id: 1, seen: 6 }])
+  expect(w.toasts).toEqual([])
+})
+
+test('a paused ledger fires nothing', async ($, on) => {
+  const w = world(on)
+  put(w, addRule(emptyLedger(), { ...draft(ASKED), when: WHEN }, 12))
+  await $.session.start(LIVE)
+  await $.command.run(slash('off'))
+  await $.prompt.compose(COMPOSE)
+  expect(((await $.tool.call(bash('git commit -m x'))) as { context?: string[] }).context).toBeUndefined()
+})
+
+test('a paused ledger stays quiet when a rule is added or removed', async ($, on) => {
+  const w = world(on)
+  put(w, addRule(emptyLedger(), { ...draft(ASKED), when: WHEN }, 12))
+  await $.session.start(LIVE)
+  await $.command.run(slash('off'))
+  await $.command.run(slash('add never use var'))
+  expect(((await $.tool.call(bash('git commit -m x'))) as { context?: string[] }).context).toBeUndefined()
+  await $.command.run(slash('on'))
+  await $.prompt.compose(COMPOSE)
+  expect(((await $.tool.call(bash('git commit -m x'))) as { context?: string[] }).context?.join('\n')).toContain(ASKED)
+})
+
+test('a kept rule never goes, and a scheduled run does not age the rules', async ($, on) => {
+  const w = world(on)
+  put(w, addRule(emptyLedger(), draft('stop after the first epoch', 'task'), 12))
+  await $.session.start(LIVE)
+  for (let day = 1; day <= 4; day++) {
+    await w.clock.advance(DAY)
+    await submit($, 'add a login page', { kind: 'scheduled-trigger' })
+  }
+  expect(saved(w)).toMatchObject({ days: 0 })
+  await $.command.run(slash('keep 1'))
+  for (let day = 1; day <= 40; day++) {
+    await w.clock.advance(DAY)
+    await submit($, 'add a login page')
+  }
+  expect(saved(w)?.rules).toMatchObject([{ id: 1, life: 'kept' }])
+  expect(w.toasts).toEqual([])
 })
 
 test('only the user’s own prompts are judged', async ($, on) => {

@@ -1,6 +1,8 @@
-import type { Verdict } from './judge'
+import type { Span, Verdict } from './judge'
 import { addRule, findSimilar, replaceRule, strikeRule } from './rules'
 import type { Ledger } from './rules'
+import { showTrigger } from './trigger'
+import type { Trigger } from './trigger'
 
 const PREFIX = 'correction-ledger:'
 
@@ -13,11 +15,20 @@ const broken = (l: Ledger, id: number): string => {
   return `${PREFIX} rule #${id} broken again (${rule?.strikes ?? 0}×): ${rule?.text ?? ''}`
 }
 
-const saved = (l: Ledger, text: string, when: When): Applied => {
-  const next = addRule(l, { text, quote: when.quote, now: when.now }, when.max)
+type Found = { text: string; life: Span; when?: Trigger }
+
+const saved = (l: Ledger, v: Found, when: When): Applied => {
+  const next = addRule(l, { ...v, quote: when.quote, now: when.now }, when.max)
   const id = next.rules[next.rules.length - 1]?.id ?? 0
-  return { ledger: next, note: `${PREFIX} saved rule #${id}: ${text} (/rules rm ${id} to undo)` }
+  const text = v.when === undefined ? v.text : `${v.text} [fires on ${showTrigger(v.when)}]`
+  const note =
+    v.life === 'task'
+      ? `${PREFIX} saved rule #${id} for this task: ${text} (/rules rm ${id} to undo, /rules keep ${id} to keep)`
+      : `${PREFIX} saved rule #${id}: ${text} (/rules rm ${id} to undo)`
+  return { ledger: next, note }
 }
+
+const found = (v: Found): Found => ({ text: v.text, life: v.life, ...(v.when === undefined ? {} : { when: v.when }) })
 
 // Puts a verdict into the ledger. A rule the user had to say again is a strike on the saved one, never a copy.
 export const applyVerdict = (l: Ledger, v: Verdict, when: When): Applied => {
@@ -28,11 +39,11 @@ export const applyVerdict = (l: Ledger, v: Verdict, when: When): Applied => {
     return { ledger: next, note: broken(next, v.id) }
   }
   if (v.kind === 'replace' && l.rules.some(r => r.id === v.id)) {
-    const next = replaceRule(l, v.id, { text: v.text, quote: when.quote, now: when.now })
+    const next = replaceRule(l, v.id, { ...found(v), quote: when.quote, now: when.now })
     return { ledger: next, note: `${PREFIX} updated rule #${v.id}: ${v.text}` }
   }
   const same = findSimilar(l, v.text)
-  if (same === null) return saved(l, v.text, when)
+  if (same === null) return saved(l, found(v), when)
   const next = strikeRule(l, same.id, when.now)
   return { ledger: next, note: broken(next, same.id) }
 }

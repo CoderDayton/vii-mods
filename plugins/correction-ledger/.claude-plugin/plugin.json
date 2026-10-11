@@ -1,7 +1,7 @@
 {
   "name": "correction-ledger",
   "version": "0.1.0",
-  "description": "Saves each correction you make as a standing rule, feeds the rules back every turn, and makes a rule louder each time it is broken.",
+  "description": "Saves each correction you make as a rule, sends it every turn or when Claude makes the call it is about, makes it louder each time it is broken, and removes it when it is no longer used.",
   "userConfig": {
     "model": {
       "type": "string",
@@ -24,6 +24,22 @@
       "default": 15,
       "min": 5,
       "max": 60
+    },
+    "taskDays": {
+      "type": "number",
+      "title": "Life of a task rule (worked days)",
+      "description": "How many days of work in the project a rule for the job in hand lasts when you do not repeat it.",
+      "default": 2,
+      "min": 1,
+      "max": 14
+    },
+    "ruleDays": {
+      "type": "number",
+      "title": "Life of a project rule (worked days)",
+      "description": "How many days of work in the project a project rule lasts when you do not repeat or keep it.",
+      "default": 14,
+      "min": 3,
+      "max": 90
     }
   }
 }
