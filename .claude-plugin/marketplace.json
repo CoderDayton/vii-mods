@@ -28,6 +28,12 @@
       "category": "tools"
     },
     {
+      "name": "lookback",
+      "source": "./plugins/lookback",
+      "description": "Searches your past Claude Code sessions by words and by meaning with a local SQLite index and Ollama embeddings, as a tool for Claude, a /lookback command and recall beside prompts.",
+      "category": "tools"
+    },
+    {
       "name": "smart-comments",
       "source": "./plugins/smart-comments",
       "description": "Reads each comment Claude adds, lets through the ones that tell a reader what the code cannot, skips docstrings, and names the lines to cut.",

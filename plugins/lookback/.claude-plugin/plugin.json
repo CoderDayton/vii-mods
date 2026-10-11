@@ -1,0 +1,39 @@
+{
+  "name": "lookback",
+  "version": "0.1.0",
+  "description": "Searches your past Claude Code sessions by words and by meaning. A local DuckDB index and local Ollama embeddings, no cloud, no daemon.",
+  "userConfig": {
+    "limit": {
+      "type": "number",
+      "title": "Sessions per search",
+      "description": "How many past sessions a search returns.",
+      "default": 5,
+      "min": 1,
+      "max": 15
+    },
+    "autoRecall": {
+      "type": "boolean",
+      "title": "Recall when you ask about past work",
+      "description": "When a prompt asks about earlier work (\"didn't we fix this\", \"what was that error\"), search and hand Claude the best matches beside the prompt.",
+      "default": true
+    },
+    "autoIndex": {
+      "type": "boolean",
+      "title": "Index at session start",
+      "description": "Read new transcript lines in the background when a session starts.",
+      "default": true
+    },
+    "embeddingModel": {
+      "type": "string",
+      "title": "Embedding model",
+      "description": "The model Ollama serves for embeddings. A different model rebuilds the vectors.",
+      "default": "nomic-embed-text"
+    },
+    "embeddingUrl": {
+      "type": "string",
+      "title": "Embedding endpoint",
+      "description": "The OpenAI-compatible base URL of the embedding server. Ollama serves one at /v1.",
+      "default": "http://localhost:11434/v1"
+    }
+  }
+}

@@ -1,0 +1,103 @@
+import { chunksOf } from '../core/text/chunk'
+import { entriesOf } from '../core/transcript/entries'
+import type { Entry } from '../core/types'
+import { EmbeddingUnavailableError } from './embedding/embedder'
+import type { Embedder } from './embedding/embedder'
+import type { Store } from './store/store'
+import { listTranscripts, newLines } from './transcript/scan'
+import type { TranscriptFile } from './transcript/scan'
+
+export type Progress = {
+  phase: 'transcripts' | 'embedding'
+  // Bytes read, then entries embedded.
+  done: number
+  total: number
+}
+
+export type IndexOptions = {
+  projectsRoot: string
+  // Without one the index holds keywords only.
+  embedder: Embedder | null
+  onProgress?: (progress: Progress) => void
+}
+
+export type IndexReport = {
+  files: number
+  entries: number
+  chunks: number
+  embeddingError: string | null
+}
+
+// Entries embedded between two writes to the index.
+const EMBED_ENTRIES = 128
+
+type Job = { file: TranscriptFile; from: number }
+
+// Where reading starts in each transcript: after the last line read, at the top for a new file or one that
+// shrank (its offset is past the end), and nowhere for a file whose size has not moved.
+const jobsFor = (store: Store, files: readonly TranscriptFile[]): Job[] => {
+  const jobs: Job[] = []
+  for (const file of files) {
+    const state = store.fileState(file.path)
+    if (state === null) jobs.push({ file, from: 0 })
+    else if (file.size < state.offset) {
+      store.dropSource(file.path)
+      jobs.push({ file, from: 0 })
+    } else if (file.size !== state.size) jobs.push({ file, from: state.offset })
+  }
+  return jobs
+}
+
+// Reads the transcripts that are new or grew since the last run, then embeds the entries that lack a vector.
+// Safe to stop at any point and run again.
+export const indexAll = async (store: Store, options: IndexOptions): Promise<IndexReport> => {
+  const report: IndexReport = { files: 0, entries: 0, chunks: 0, embeddingError: null }
+  await readTranscripts(store, options, report)
+  if (options.embedder !== null) await embedPending(store, options.embedder, options, report)
+  return report
+}
+
+const readTranscripts = async (store: Store, options: IndexOptions, report: IndexReport): Promise<void> => {
+  const jobs = jobsFor(store, await listTranscripts(options.projectsRoot))
+  const total = jobs.reduce((sum, j) => sum + j.file.size - j.from, 0)
+  let done = 0
+  for (const { file, from } of jobs) {
+    report.files++
+    let pos = from
+    for await (const batch of newLines(file.path, from, file.size)) {
+      const entries: Entry[] = batch.lines.flatMap(entriesOf)
+      store.ingest(file.path, entries, { size: file.size, offset: batch.end })
+      report.entries += entries.length
+      done += batch.end - pos
+      pos = batch.end
+      options.onProgress?.({ phase: 'transcripts', done, total })
+    }
+  }
+}
+
+const embedPending = async (store: Store, embedder: Embedder, options: IndexOptions, report: IndexReport): Promise<void> => {
+  try {
+    store.useVectors({ model: embedder.model, dimension: await embedder.dimension() })
+    const total = store.countPending()
+    let done = 0
+    for (;;) {
+      const batch = store.pending(EMBED_ENTRIES)
+      if (batch.length === 0) return
+      const passages = batch.flatMap(e => chunksOf(e.text).map((text, seq) => ({ entry: e.id, seq, text })))
+      if (passages.length === 0) throw new Error('entries waiting for vectors have no text to embed')
+      const vectors = await embedder.embed(
+        passages.map(p => p.text),
+        'document',
+      )
+      store.addChunks(passages.map((p, i) => ({ entry: p.entry, seq: p.seq, vector: vectors[i]! })))
+      report.chunks += passages.length
+      done += batch.length
+      options.onProgress?.({ phase: 'embedding', done, total })
+    }
+  } catch (error) {
+    if (!(error instanceof EmbeddingUnavailableError)) throw error
+    report.embeddingError = error.message
+  } finally {
+    store.compactVectors()
+  }
+}
