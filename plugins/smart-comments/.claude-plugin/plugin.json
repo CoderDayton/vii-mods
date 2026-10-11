@@ -1,0 +1,27 @@
+{
+  "name": "smart-comments",
+  "version": "0.1.0",
+  "description": "Reads each comment Claude adds, lets through the ones that tell a reader what the code cannot, skips docstrings, and names the lines to cut.",
+  "userConfig": {
+    "maxPlain": {
+      "type": "number",
+      "title": "Plain comments allowed",
+      "description": "How many new comment lines that add little an edit, or a file over one turn, may hold. Comments that repeat the code or tell the story of the edit are never allowed.",
+      "default": 3,
+      "min": 0,
+      "max": 20
+    },
+    "allowDocstrings": {
+      "type": "boolean",
+      "title": "Allow docstrings",
+      "description": "Skip a docstring that sits right on a declaration. Off, a docstring is judged like any other comment.",
+      "default": true
+    },
+    "notify": {
+      "type": "boolean",
+      "title": "Show a toast",
+      "description": "Show a toast when the mod flags comments in an edit or sends Claude back at the end of a turn.",
+      "default": false
+    }
+  }
+}

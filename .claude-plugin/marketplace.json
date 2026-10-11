@@ -26,6 +26,12 @@
       "source": "./plugins/fleet-board",
       "description": "A pane for the other Claude sessions you run: who is working, who went quiet. Brief, ping, task or stop them, and open new sessions from the pane.",
       "category": "tools"
+    },
+    {
+      "name": "smart-comments",
+      "source": "./plugins/smart-comments",
+      "description": "Reads each comment Claude adds, lets through the ones that tell a reader what the code cannot, skips docstrings, and names the lines to cut.",
+      "category": "tools"
     }
   ]
 }
