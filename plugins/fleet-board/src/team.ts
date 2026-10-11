@@ -116,7 +116,6 @@ const taskLines = (hire: Hire, now: number): string[] => {
 const memberLine = (id: string, hire: Hire): string =>
   `- ${hire.name} (session ${id}): ${roleLabel(hire.role)}, ${hire.readyAt === undefined ? 'waiting for a reply' : 'ready'}`
 
-// The team as the boss reads it through fleet_status: each member with its task lines.
 export const teamStatus = (team: Readonly<Record<string, Hire>>, now: number): string => {
   const members = Object.entries(team)
   if (members.length === 0) return 'Your team is empty.'

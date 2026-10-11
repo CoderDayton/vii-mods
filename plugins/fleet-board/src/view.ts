@@ -16,7 +16,6 @@ export type Row = {
   state: PeerState
   age: string
   isQuiet: boolean
-  // The role label of a team member, "—" for any other session.
   role: string
   // True until a team member's transcript shows a reply to its briefing.
   waiting: boolean
@@ -83,12 +82,10 @@ const PANE_CHROME = 4
 const SECTION_CHROME = 4
 const MIN_BODY = 20
 
-// The width of the text inside a section for a pane `columns` wide.
 export const bodyColumns = (columns: number): number => Math.max(MIN_BODY, columns - PANE_CHROME - SECTION_CHROME)
 
 const cut = (text: string, max: number): string => (text.length <= max ? text : max <= 1 ? text.slice(0, Math.max(0, max)) : `${text.slice(0, max - 1)}…`)
 
-// The segments cut off at `width` characters, the last one kept ending in an ellipsis.
 const fit = (line: Line, width: number): Line => {
   const out: Line = []
   let left = width
@@ -131,7 +128,6 @@ export const wrap = (text: string, width: number): string[] =>
 const REPLY_LINES = 12
 const NOTE_LINES = 4
 
-// The first `cap` lines, then one line that says how many were left out.
 const capped = (lines: string[], cap: number): string[] => {
   if (lines.length <= cap) return lines
   const left = lines.length - cap
@@ -215,7 +211,6 @@ const boxed = (rows: string[], width: number): string[] => [
   `╰${'─'.repeat(width - 2)}╯`,
 ]
 
-// The frame as plain text, with the borders, padding and blank lines the Boxes draw.
 export const textOf = (frame: Frame, columns: number): string[] => {
   const inner = columns - PANE_CHROME
   const sections = frame.sections.flatMap((s, i) => [...(i === 0 ? [] : ['']), ...boxed(['', s.title, ...s.lines.map(plain), ''], inner)])

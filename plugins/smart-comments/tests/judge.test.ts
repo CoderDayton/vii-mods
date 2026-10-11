@@ -86,6 +86,21 @@ test('a rule word does not save a comment that repeats the code', () => {
   expect(kinds('// retries stay below 5 because the API bans a client at 6\nconst MAX = 5')).toBe('1:keep')
 })
 
+test('a comment that states a return contract, an exit code, an argument, a unit or a consequence is kept', () => {
+  expect(kinds('// The owner, or null when nobody holds it.\nexport const owner = (k: string) => map.get(k)')).toBe('1:keep')
+  expect(kinds('# Exit 4: the file moved on.\nrun', 'a.sh')).toBe('1:keep')
+  expect(kinds('# $1 is the ledger file, $2 the line.\nrun', 'a.sh')).toBe('1:keep')
+  expect(kinds('// Arguments: jobs dir, gate file, job file.\nrun()')).toBe('1:keep')
+  expect(kinds('// Offsets are 1-based.\nconst col = 1')).toBe('1:keep')
+  expect(kinds('// Sizes are in bytes.\nconst n = 0')).toBe('1:keep')
+  expect(kinds('// The window starts on a row boundary, so the text is exact.\nconst start = first()')).toBe('1:keep')
+})
+
+test('a comment with none of those stays plain', () => {
+  expect(kinds('// The open sessions of this project.\nconst open = list()')).toBe('1:plain')
+  expect(kinds('// Also sorted by name for the listing.\nconst order = lookup()')).toBe('1:plain')
+})
+
 test('a history word counts only as history', () => {
   expect(kinds('// fixed-size ring buffer, 512 entries\nconst ring = make()')).toBe('1:keep')
   expect(kinds('// Refactored the parser\nparse()')).toBe('1:noise')

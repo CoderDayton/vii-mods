@@ -9,7 +9,6 @@ export type Judged = { line: number; raw: string; kind: Kind; why: string }
 
 type Verdict = { kind: Kind; why: string }
 
-// A comment repeats the code when at most this share of its words is new.
 const MAX_NEW = 1 / 3
 // Code lines under a comment that it is compared with.
 const CONTEXT_LINES = 2
@@ -19,7 +18,7 @@ const DIRECTIVE =
 
 const HISTORY: readonly RegExp[] = [
   /\b(previously|originally|formerly|anymore|any more)\b|\bno longer\b(?! than\b)/i,
-  // "This used to return null" is history; "a table used to dedupe peers" says what the table is for.
+  // "used to" right after a pronoun is history; after a noun it names a purpose, as in "a table used to dedupe peers".
   /(^|\b(it|this|that|we|they|which|there|code|function|method) )used to\b|\bused to (be|have)\b/i,
   /\b(was|were|been|got) (changed|moved|renamed|removed|added|replaced|refactored|rewritten|updated)\b/i,
   /^(changed|moved|renamed|removed|added|replaced|refactored|updated|switched|migrated|extracted|rewrote|simplified|cleaned up)\b/i,
@@ -33,9 +32,11 @@ const HISTORY: readonly RegExp[] = [
 const FIGURE =
   /\d+(\.\d+)?\s?(ms|s|sec|min|h|hz|kb|mb|gb|kib|mib|gib|px|%|x|fps|bytes?|tokens?|chars?|lines?|rows?|items?|entries|times|tries)\b|\d{2,}|\d\.\d|\bO\(/i
 const LINK = /https?:\/\/|#\d+\b|\b[A-Z]{2,}-\d+\b|\bRFC ?\d+|§/
-// Phrases that lead into why the code is the way it is.
 const REASON =
   /\b(so that|to (avoid|prevent|stop)|in case|by the time|or else|in order to|as long as|even (if|when|though)|rather than|on purpose|by design|relies on|depends on)\b/i
+
+const CONTRACT =
+  /\b(or (null|undefined)|(null|undefined|none) (when|for|if)|[01]-based|which is (how|why)|so (a|an|the|that|they|it|its|their|each|every|two|there|one|no) )\b|^(exit \d|\$\d|arguments?:)|\bin (bytes|bits|characters|columns|cells|rows|pixels|seconds|milliseconds|[km]ib)\b/i
 
 const judgeOne = (c: Comment, code: string): Verdict => {
   if (c.shebang || DIRECTIVE.test(c.text)) return { kind: 'keep', why: 'a tool directive' }
@@ -44,6 +45,7 @@ const judgeOne = (c: Comment, code: string): Verdict => {
   if (fresh !== null && fresh <= MAX_NEW) return { kind: 'noise', why: 'repeats the code' }
   if (FIGURE.test(c.text)) return { kind: 'keep', why: 'a measured figure' }
   if (LINK.test(c.text)) return { kind: 'keep', why: 'a link' }
+  if (CONTRACT.test(c.text)) return { kind: 'keep', why: 'a contract or a consequence' }
   if (hasRuleWord(c.text) || REASON.test(c.text)) return { kind: 'keep', why: 'a rule or a reason' }
   return { kind: 'plain', why: 'adds little' }
 }
@@ -57,7 +59,6 @@ const CONTROL = /^(if|for|while|switch|catch)\b/
 
 const C_FAMILY: ReadonlySet<string> = new Set(['c', 'h', 'cc', 'cpp', 'cxx', 'hpp', 'hh', 'hxx', 'ipp', 'inl'])
 const C_STATEMENT = /^(return|if|else|while|for|switch|case|do|throw|delete|new|goto|sizeof|co_return|co_await)\b/
-// C and C++: a type-led function, or a struct, typedef, template or macro.
 const C_DECLARES =
   /^(struct|union|typedef|template|using|extern|virtual|explicit|inline|constexpr|#\s*define)\b|^(?:[\w:]+(?:<[^>]*>)?[\s*&]+)+[\w:~]+\s*\([^;{]*\)[\w\s]*[{;]?$/
 // C and C++: a variable at the top level. Tested on the untrimmed line.
@@ -131,7 +132,6 @@ export const tallyOf = (judged: readonly Judged[]): Tally => ({
   noise: judged.filter(j => j.kind === 'noise').length,
 })
 
-// New code lines that earn room for one more plain comment.
 const CODE_PER_PLAIN = 20
 
 // How many plain comments an edit may add: the limit, or one for each twenty lines of new code when

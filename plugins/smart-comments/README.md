@@ -30,7 +30,7 @@ The first test that fits decides.
 1. A tool directive, a shebang or a licence line is kept.
 2. History words ("now uses", "previously", "refactored") make it noise.
 3. It repeats the code when at most a third of its words are new. The words of the comment, without filler words and empty verbs such as "get" and "check", are compared with the words of the code it sits on: the same line for a trailing comment, else the next two code lines. Names are split, so `userCache` gives "user" and "cache".
-4. A measured figure, a rule word ("must", "never", "because"), a phrase that gives the reason ("so that", "to avoid", "in case", "by the time"), or a link keeps it.
+4. A measured figure, a rule word ("must", "never", "because"), a phrase that gives the reason ("so that", "to avoid", "in case", "by the time"), a consequence ("so the text is exact"), a return or exit contract ("or null when", "Exit 4", "$1 is", "Arguments:"), a unit ("1-based", "in bytes"), or a link keeps it.
 5. Anything else is plain.
 
 Test 3 runs before test 4, so "ensure user is not null" over `if (user !== null)` is noise in spite of its rule word. A line that carries on a kept sentence is kept too.

@@ -18,7 +18,6 @@ const world = (on: Parameters<typeof mock.clock>[0]) => {
     toasts: [] as string[],
     // What the next file tool call leaves in the file it names; null removes the file.
     writes: '' as string | null,
-    // What the next Bash call does.
     shell: () => undefined as void,
     calls: 0,
     deny: false,

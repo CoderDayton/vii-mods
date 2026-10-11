@@ -2,7 +2,6 @@ export const PS_ARGV = ['ps', '-e', '-o', 'pid=,ppid='] as const
 
 const MAX_DEPTH = 64
 
-// pid → parent pid, from `ps -e -o pid=,ppid=`.
 export const parseParents = (text: string): Map<number, number> => {
   const parents = new Map<number, number>()
   for (const line of text.split('\n')) {

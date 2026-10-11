@@ -5,7 +5,6 @@ import type { Trigger, Use } from './trigger'
 
 export type Request = { system: string; prompt: string }
 
-// How long the model says a new rule should last.
 export type Span = 'task' | 'project'
 
 export type Verdict =

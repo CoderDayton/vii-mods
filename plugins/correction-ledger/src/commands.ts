@@ -65,7 +65,6 @@ const add = (rest: string, c: Context): Outcome => {
   return { text: `Saved #${id}: ${text}`, ledger }
 }
 
-// The rule number a command names, with or without its #.
 const idOf = (rest: string): number | null => {
   const m = /^#?(\d+)$/.exec(rest.trim())
   return m === null ? null : Number(m[1])

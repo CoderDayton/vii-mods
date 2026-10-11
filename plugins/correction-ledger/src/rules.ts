@@ -5,7 +5,6 @@ import type { Trigger } from './trigger'
 // How long a rule is for: the job in hand, the project, or until the user removes it.
 export type Life = 'task' | 'project' | 'kept'
 
-// The worked days a rule of each life lasts when nobody repeats it.
 export type Lives = { task: number; project: number }
 
 export type Rule = {
@@ -41,13 +40,10 @@ const stamp = (l: Ledger, now: number): Ledger => {
   return day > l.day ? { ...l, day, days: l.days + 1 } : l
 }
 
-// Each break buys a rule its life again.
 const lifetime = (r: Rule, lives: Lives): number => (r.life === 'kept' ? Infinity : lives[r.life] * (1 + r.strikes))
 
-// Worked days a rule has left, today included.
 export const daysLeft = (l: Ledger, r: Rule, lives: Lives): number => Math.max(0, lifetime(r, lives) - (l.days - r.seen))
 
-// Counts today and drops the rules that ran out.
 export const tick = (l: Ledger, now: number, lives: Lives): { ledger: Ledger; expired: Rule[] } => {
   const aged = stamp(l, now)
   const expired = aged.rules.filter(r => daysLeft(aged, r, lives) === 0)
@@ -121,7 +117,6 @@ const overlap = (a: readonly string[], b: readonly string[]): number => {
   return all === 0 ? 0 : shared / all
 }
 
-// The saved rule that says what this text says, if any.
 export const findSimilar = (l: Ledger, text: string): Rule | null => {
   const words = wordsOf(text)
   if (words.length === 0) return null

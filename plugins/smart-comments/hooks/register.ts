@@ -20,7 +20,6 @@ const SHELL_TOOL = 'Bash'
 const MAX_CHARS = 400_000
 const REALPATH_MS = 2000
 const GIT_MS = 3000
-// Shell-edited files looked at when one turn ends.
 const MAX_SHELL_FILES = 40
 
 // The file a call writes, as the call spells it, or null for a call that writes none.
@@ -54,7 +53,6 @@ const isSomeoneElses = async ($: Engine, path: string): Promise<boolean> => {
   }
 }
 
-// What git prints, or null when it fails or the output was cut short.
 const git = async ($: Engine, root: string, args: readonly string[]): Promise<string | null> => {
   try {
     const run = await $.process.run(['git', '-C', root, ...args], { timeoutMs: GIT_MS })
@@ -80,7 +78,6 @@ const changedFiles = async ($: Engine): Promise<Changed | null> => {
 
 // A file as it was before Claude wrote it.
 type Before = { syn: Syntax; before: string | null }
-// A file Claude wrote this turn through a file tool, with how the call spelled it.
 type Touched = Before & { shown: string }
 
 // The file a call is about to write, read before it runs. Null for a call that is not watched.
@@ -131,7 +128,6 @@ export const register: Register = (on, options) => {
   // The shell commands of this turn, and the files git saw as changed when the turn's prompt arrived.
   let shell: string[] = []
   let atPrompt: Promise<Changed | null> | null = null
-  // Whether this turn of the user's already got its follow-up prompt.
   let isAsked = false
 
   // The comments a file gained, judged, with the room its new code earns for plain ones.

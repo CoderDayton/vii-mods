@@ -5,7 +5,6 @@ const MAX_LINES = 6
 const PUSHBACK =
   /\b(?:no|not|never|stop|wrong|incorrect|again|still|instead|should|supposed to|(?:do|does|did|is|are|was|were|has|have|wo|ca|should|could|would)n'?t|i (?:said|told|asked|meant|wanted))\b/i
 
-// True when a prompt might be a correction and is worth one model call.
 export const mightCorrect = (text: string): boolean => {
   const t = text.trim()
   if (t === '' || t.startsWith('/') || t.length > MAX_CHARS) return false

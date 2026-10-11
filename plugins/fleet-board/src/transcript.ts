@@ -28,7 +28,6 @@ exit 0`
 // The size of the session's transcript in bytes, 0 when there is none.
 export const SIZE_ARGV = (dir: string, id: string): string[] => ['sh', '-c', SIZE, 'fleet-board-size', dir, id]
 
-// The bytes of the session's transcript from byte `from` to its end.
 export const READ_ARGV = (dir: string, id: string, from: number): string[] => ['sh', '-c', READ, 'fleet-board-read', dir, id, String(from)]
 
 // The first row boundary at or after byte `from`.
@@ -77,7 +76,6 @@ const timeOf = (row: Record<string, unknown>): number | null => {
   return Number.isFinite(at) ? at : null
 }
 
-// Runs `tail -c <bytes>` on a transcript and returns its stdout.
 export type Tail = (argv: string[]) => Promise<string>
 
 // True when the earliest timestamped row in the text is before `since`, so the text reaches back to `since`.
@@ -90,7 +88,6 @@ const reachesBack = (jsonl: string, since: number): boolean => {
   return false
 }
 
-// An assistant text and the time it was written.
 export type Text = { at: number; text: string }
 
 // The whole rows of a chunk: through its last newline, and the last line too when it already parses, so a row written

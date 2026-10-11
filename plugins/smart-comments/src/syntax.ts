@@ -22,7 +22,6 @@ export const syntaxOf = (path: string): Syntax | null => FAMILIES.find(f => f.ex
 export type Comment = {
   // 1-based.
   line: number
-  // The words of the comment, without its marker.
   text: string
   // The comment as written, marker included, without the code before it.
   raw: string
