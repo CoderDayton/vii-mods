@@ -94,7 +94,10 @@ const dispatch = async (name: ToolName, input: Readonly<Record<string, unknown>>
   const session = argOf(input, 'session')
   if (session === '') return reply('name a session: its number, its name or its folder name', true)
   const found = resolvePeer(await fleet.refresh(), session)
-  if ('error' in found) return reply(found.error, true)
+  if ('error' in found) {
+    const hidden = resolvePeer(fleet.outside(), session)
+    return reply('peer' in hidden ? `${hidden.peer.name} is outside this project's root` : found.error, true)
+  }
   const peer = found.peer
 
   if (name === 'fleet_hire') {

@@ -22,7 +22,7 @@ const record = (r: Rec) =>
 const world = () => {
   const w = {
     sessions: [
-      { id: 'me', name: 'claude-mods-1c', dir: '/p/claude-mods', at: 1 },
+      { id: 'me', name: 'claude-mods-1c', dir: '/p', at: 1 },
       { id: 'q1', name: 'quorum-63', dir: '/p/quorum', at: 2 },
       { id: 'm1', name: 'mnemos-9e', dir: '/p/mnemos', at: 3 },
     ] as Rec[],
@@ -101,6 +101,39 @@ test('refresh lists the other sessions in start order, leaves this one out and k
   expect(peers.map(p => p.name)).toEqual(['quorum-63', 'mnemos-9e'])
   expect(w.peers).toEqual(peers)
   expect(w.boss).toBe('claude-mods-1c')
+})
+
+test('only sessions inside the boss root are listed; a sibling folder with a similar name is hidden', async () => {
+  const { w, fleet } = world()
+  w.sessions = [
+    { id: 'me', name: 'boss', dir: '/a/proj', at: 1 },
+    { id: 's1', name: 'inside', dir: '/a/proj/sub', at: 2 },
+    { id: 's2', name: 'same', dir: '/a/proj', at: 3 },
+    { id: 's3', name: 'sibling', dir: '/a/proj-2', at: 4 },
+    { id: 's4', name: 'elsewhere', dir: '/b/other', at: 5 },
+  ]
+  expect((await fleet.refresh()).map(p => p.name)).toEqual(['inside', 'same'])
+  expect(w.peers.map(p => p.name)).toEqual(['inside', 'same'])
+  expect(fleet.outside().map(p => p.name)).toEqual(['sibling', 'elsewhere'])
+})
+
+test('with no entry for the boss in the scan every peer is kept', async () => {
+  const { w, fleet } = world()
+  w.sessions = w.sessions.filter(s => s.id !== 'me')
+  w.sessions[0]!.dir = '/x/one'
+  w.sessions[1]!.dir = '/y/two'
+  expect((await fleet.refresh()).map(p => p.name)).toEqual(['quorum-63', 'mnemos-9e'])
+  expect(fleet.outside()).toEqual([])
+})
+
+test('a team member outside the root stays on the team and in the list', async () => {
+  const { w, fleet } = world()
+  const [q] = await fleet.refresh()
+  await fleet.brief(q!, research)
+  w.sessions[0]!.dir = '/elsewhere'
+  expect((await fleet.refresh()).map(p => p.name)).toEqual(['quorum-63'])
+  expect(w.roster.q1).toBeDefined()
+  expect(fleet.outside().map(p => p.name)).toEqual(['mnemos-9e'])
 })
 
 // A member is dropped only after three scans in a row without its registry line.

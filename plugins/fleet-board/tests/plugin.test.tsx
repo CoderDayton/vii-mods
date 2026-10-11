@@ -22,7 +22,7 @@ const world = (on: Parameters<typeof mock.clock>[0], seed: Record<string, unknow
   const w = {
     clock: mock.clock(on, { now: NOW }),
     sessions: [
-      { id: 'me', name: 'claude-mods-1c', dir: '/p/claude-mods', at: 1 },
+      { id: 'me', name: 'claude-mods-1c', dir: '/p', at: 1 },
       { id: 'q1', name: 'quorum-63', dir: '/p/quorum', state: 'busy', at: 2 },
       { id: 'm1', name: 'mnemos-9e', dir: '/p/mnemos', state: 'busy', at: 3, updated: NOW - 3_600_000 },
     ] as Rec[],
@@ -156,10 +156,10 @@ test('the pane shows each session with its flags', async ($, on) => {
   await $.session.start(LIVE)
   await run($, '')
   const ui = await pane($)
-  expect(await ui.find({ type: 'Text', text: /2 sessions · 2 working/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /2 sessions {2}2 working/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /quorum-63/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /mnemos-9e/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /!/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /esc closes/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -173,8 +173,10 @@ test('the pane has no write actions: no input, no select, and only Refresh and C
   for (const action of [/Ping/, /Hire/, /Stop/, /Drop/, /Disband/, /New session/, /Open/]) {
     expect(await ui.find({ type: 'Button', text: action })).toBeUndefined()
   }
-  expect(await ui.find({ type: 'Button', text: /Refresh/ })).toBeDefined()
-  expect(await ui.find({ type: 'Button', text: /Close/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /^refresh$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /^close$/ })).toBeDefined()
+  // The terminal draws "[ label ]" around a Button label, so a label with brackets of its own would show two pairs.
+  expect(await ui.find({ type: 'Button', text: /[\[\]]/ })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -183,8 +185,10 @@ test('the pane shows a team member with its task id, status and reply', async ($
   await $.session.start(LIVE)
   await run($, '')
   const ui = await pane($)
-  expect(await ui.find({ type: 'Text', text: /Your team/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /task k3x9qa: done — Built it\./ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^team$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /task k3x9qa/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Built it\./ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^done/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -208,6 +212,18 @@ test('fleet_hire of a session already on the team is an error and changes nothin
   })
   expect(w.sent.length).toBe(sent)
   expect((await tool($, 'fleet_status')).text).toContain('quorum-63 (session q1): Research')
+})
+
+test('fleet_hire of a session outside the boss root is an error that says so, and sends nothing', async ($, on) => {
+  const w = world(on)
+  w.sessions.push({ id: 'o1', name: 'outsider-7', dir: '/elsewhere/app', state: 'busy', at: 4 })
+  await $.session.start(LIVE)
+  expect(await tool($, 'fleet_hire', { session: 'outsider', role: 'local' })).toEqual({
+    text: "outsider-7 is outside this project's root",
+    isError: true,
+  })
+  expect(w.sent).toEqual([])
+  expect((await tool($, 'fleet_status')).text).toBe('Your team is empty.')
 })
 
 test('fleet_hire with an unknown session or role is an error and changes nothing', async ($, on) => {

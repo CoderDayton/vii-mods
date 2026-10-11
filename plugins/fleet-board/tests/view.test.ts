@@ -1,7 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Peer } from '../src/peers'
-import { headline, layoutOf, rowsOf } from '../src/view'
+import { bodyColumns, frameOf, headline, rowsOf, textOf, wrap } from '../src/view'
+import type { Row } from '../src/view'
+import type { Task } from '../types'
 
 const MIN = 60_000
 
@@ -19,12 +21,12 @@ test('a row has its number, names, state, age and role', () => {
   const rows = rowsOf(PEERS, { a: { name: 'quorum-63', dir: '/p/quorum', role: 'research', briefedAt: 1, readyAt: 2 } }, NOW, 30 * MIN)
   expect(rows[0]).toEqual({
     n: 1, id: 'a', name: 'quorum-63', folder: 'quorum', state: 'working', age: '2m', isQuiet: false, role: 'Research',
-    task: '', last: '',
+    waiting: false, taskId: '', status: '', flag: '', last: '',
   })
   expect(rows[2]).toMatchObject({ n: 3, folder: 'lune-voice', state: 'idle', age: '1h', role: '—' })
 })
 
-test('a team member row carries its task id and status, and the first line of its reply', () => {
+test('a team member row carries its task id, status and the whole reply', () => {
   const roster = {
     a: {
       name: 'quorum-63', dir: '/p/quorum', role: 'research' as const, briefedAt: 1, readyAt: 2,
@@ -32,13 +34,23 @@ test('a team member row carries its task id and status, and the first line of it
     },
   }
   const rows = rowsOf(PEERS, roster, NOW, 30 * MIN)
-  expect(rows[0]).toMatchObject({ task: 'task k3x9qa: done', last: 'Built it.' })
-  expect(rows[1]).toMatchObject({ task: '', last: '' })
+  expect(rows[0]).toMatchObject({ taskId: 'k3x9qa', status: 'done', flag: '', last: 'Built it.\ndone k3x9qa' })
+  expect(rows[1]).toMatchObject({ taskId: '', status: '', last: '' })
 })
 
-test('a team member that has not replied yet is marked waiting in its role', () => {
+test('a sent task is flagged asked on a question and stale after ten quiet minutes', () => {
+  const hire = (task: Task) => ({ name: 'quorum-63', dir: '/p/quorum', role: 'research' as const, briefedAt: 1, readyAt: 2, task })
+  const asked = rowsOf(PEERS, { a: hire({ id: 'k3x9qa', sentAt: NOW - MIN, status: 'sent', last: 'Which parser module?', lastAt: NOW - MIN }) }, NOW, 30 * MIN)
+  expect(asked[0]).toMatchObject({ status: 'sent', flag: 'asked' })
+  const stale = rowsOf(PEERS, { a: hire({ id: 'k3x9qa', sentAt: NOW - 20 * MIN, status: 'sent', last: 'working', lastAt: NOW - 11 * MIN }) }, NOW, 30 * MIN)
+  expect(stale[0]).toMatchObject({ status: 'sent', flag: 'stale' })
+  const fresh = rowsOf(PEERS, { a: hire({ id: 'k3x9qa', sentAt: NOW - 20 * MIN, status: 'sent', last: 'working', lastAt: NOW - 9 * MIN }) }, NOW, 30 * MIN)
+  expect(fresh[0]).toMatchObject({ status: 'sent', flag: '' })
+})
+
+test('a team member that has not replied yet is marked waiting', () => {
   const rows = rowsOf(PEERS, { a: { name: 'quorum-63', dir: '/p/quorum', role: 'research', briefedAt: 1 } }, NOW, 30 * MIN)
-  expect(rows[0]?.role).toBe('Research · waiting')
+  expect(rows[0]).toMatchObject({ role: 'Research', waiting: true })
 })
 
 test('only a working session that has not changed for the quiet time is flagged', () => {
@@ -46,27 +58,137 @@ test('only a working session that has not changed for the quiet time is flagged'
   expect(rows.map(r => r.isQuiet)).toEqual([false, true, false])
 })
 
-test('a wide pane puts a session on one line with a width for each column', () => {
-  const rows = rowsOf(PEERS, {}, NOW, 30 * MIN)
-  expect(layoutOf(120, rows)).toEqual({ wide: true, name: 12, folder: 10, age: 5 })
-})
-
-test('a narrow pane gives the name whatever width is left, so a line never passes the pane', () => {
-  const rows = rowsOf(PEERS, {}, NOW, 30 * MIN)
-  const l = layoutOf(48, rows)
-  expect(l.wide).toBe(false)
-  expect(l.name + l.age + 15).toBe(48)
-  expect(layoutOf(20, rows).name).toBe(12)
-})
-
-test('long names and folders are capped in the wide layout', () => {
-  const rows = rowsOf([peer({ name: 'n'.repeat(60), dir: `/p/${'f'.repeat(60)}` })], {}, NOW, 30 * MIN)
-  expect(layoutOf(200, rows)).toMatchObject({ wide: true, name: 27, folder: 18 })
-})
-
 test('the headline counts sessions, working ones and the team', () => {
   const rows = rowsOf(PEERS, { a: { name: 'quorum-63', dir: '/p/quorum', role: 'local', briefedAt: 1 } }, NOW, 30 * MIN)
-  expect(headline(rows)).toBe('3 sessions · 2 working · 1 on the team')
-  expect(headline(rows.slice(0, 1))).toBe('1 session · 1 working · 1 on the team')
+  expect(headline(rows)).toBe('3 sessions  2 working  1 on team')
+  expect(headline(rows.slice(0, 1))).toBe('1 session  1 working  1 on team')
   expect(headline([])).toBe('no other sessions')
+})
+
+test('the body is the pane width less the pane border and padding and the section border and padding', () => {
+  expect(bodyColumns(80)).toBe(72)
+  expect(bodyColumns(60)).toBe(52)
+  expect(bodyColumns(10)).toBe(20)
+})
+
+// A team of four with every kind of line, and a session with a long name and folder.
+const busyRows = (): Row[] => {
+  const peers = [
+    peer({ id: 'a', name: 'quorum-63', dir: '/p/quorum', state: 'working', updatedAt: NOW - 2 * MIN }),
+    peer({ id: 'b', name: 'mnemos-9e', dir: '/p/mnemos', state: 'working', updatedAt: NOW - 48 * MIN }),
+    peer({ id: 'c', name: 'lune', dir: '/p/lune-voice', state: 'idle', updatedAt: NOW - 90 * MIN }),
+    peer({ id: 'd', name: 'orchard-1f', dir: '/p/orchard', state: 'working', updatedAt: NOW - MIN }),
+    peer({ id: 'e', name: 'n'.repeat(40), dir: `/p/${'f'.repeat(40)}`, state: 'idle', updatedAt: NOW - 5 * MIN }),
+    peer({ id: 'f', name: 'other-2a', dir: '/p/other', state: 'idle', updatedAt: NOW - 5 * MIN }),
+  ]
+  const base = { dir: '/p/x', role: 'research' as const, briefedAt: 1, readyAt: 2 }
+  const roster = {
+    a: { ...base, name: 'quorum-63', task: { id: 'k3x9qa', sentAt: 5, status: 'done' as const, last: `Built the parser and its tests, all green. ${'More detail. '.repeat(20)}\ndone k3x9qa` } },
+    b: { ...base, name: 'mnemos-9e', task: { id: 'm4p2zz', sentAt: 5, status: 'blocked' as const, blocker: 'blocked m4p2zz: no parser', last: 'blocked m4p2zz: no parser' } },
+    c: { ...base, name: 'lune', task: { id: 'p7q1ab', sentAt: NOW - MIN, status: 'sent' as const, last: 'Which parser module?', lastAt: NOW - MIN } },
+    d: { ...base, name: 'orchard-1f', task: { id: 'r2s8cd', sentAt: NOW - 30 * MIN, status: 'sent' as const, last: 'working on it', lastAt: NOW - 20 * MIN } },
+  }
+  return rowsOf(peers, roster, NOW, 30 * MIN)
+}
+
+const NOTES = [
+  { ok: true, text: 'sent quorum-63 a task', at: 1 },
+  { ok: false, text: `could not reach mnemos-9e: ${'the session api broke '.repeat(8)}`, at: 2 },
+]
+
+for (const columns of [60, 80, 120]) {
+  test(`at ${columns} columns no line is wider than the pane, and the frame has a border, status words and plain characters only`, () => {
+    const lines = textOf(frameOf(busyRows(), NOTES, columns), columns)
+    expect(Math.max(...lines.map(l => l.length))).toBeLessThanOrEqual(columns)
+    expect(lines[0]?.startsWith('╭') && lines[0]?.endsWith('╮')).toBe(true)
+    expect(lines.at(-1)?.startsWith('╰') && lines.at(-1)?.endsWith('╯')).toBe(true)
+    for (const line of lines.slice(1, -1)) expect(line.startsWith('│') && line.endsWith('│')).toBe(true)
+    const text = lines.join('\n')
+    for (const word of ['fleet', 'done', 'blocked', 'asked', 'stale', 'working', 'idle', 'esc closes', '[ refresh ]', '[ close ]', 'ok', 'failed']) {
+      expect(text).toContain(word)
+    }
+    expect(/[^\x20-\x7e─│╭╮╰╯…\n]/.test(text)).toBe(false)
+  })
+}
+
+test('wrap breaks on spaces, keeps blank lines, and hard-breaks a word longer than the width', () => {
+  expect(wrap('one two three four', 9)).toEqual(['one two', 'three', 'four'])
+  expect(wrap('a\n\nb', 10)).toEqual(['a', '', 'b'])
+  expect(wrap('x'.repeat(25), 10)).toEqual(['x'.repeat(10), 'x'.repeat(10), 'xxxxx'])
+})
+
+// The lines of a team member's reply: those indented under the status column.
+const replyLines = (lines: string[]): string[] => lines.filter(l => /^│ │ {9}\S/.test(l) || /^│ │ {9}$/.test(l))
+
+for (const columns of [60, 80, 120]) {
+  test(`at ${columns} columns a long reply is word-wrapped whole under its status word`, () => {
+    const lines = textOf(frameOf(busyRows(), [], columns), columns)
+    expect(Math.max(...lines.map(l => l.length))).toBeLessThanOrEqual(columns)
+    const reply = replyLines(lines)
+      .map(l => l.replace(/^│ │ +/, '').replace(/ *│ │$/, ''))
+      .join(' ')
+    const first = reply.slice(0, reply.indexOf('done k3x9qa') + 'done k3x9qa'.length)
+    const expected = `Built the parser and its tests, all green. ${'More detail. '.repeat(20)}done k3x9qa`.split(/\s+/).join(' ')
+    expect(first).toBe(expected)
+    expect(replyLines(lines).join('')).not.toContain('…')
+  })
+}
+
+test('a reply of 30 lines shows 12 and then how many more', () => {
+  const reply = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n')
+  const rows = rowsOf(PEERS.slice(0, 1), { a: { name: 'quorum-63', dir: '/p/quorum', role: 'research', briefedAt: 1, readyAt: 2, task: { id: 'k3x9qa', sentAt: 5, status: 'done', last: reply } } }, NOW, 30 * MIN)
+  const text = textOf(frameOf(rows, [], 80), 80).join('\n')
+  expect(text).toContain('line 12 ')
+  expect(text).not.toContain('line 13 ')
+  expect(text).toContain('... 18 more lines')
+})
+
+test('a note is word-wrapped whole, up to 4 lines, then how many more', () => {
+  const rows = rowsOf(PEERS, {}, NOW, 30 * MIN)
+  const lines = textOf(frameOf(rows, [{ ok: false, text: 'could not reach the session because the api broke and so on '.repeat(2), at: 1 }], 60), 60)
+  expect(Math.max(...lines.map(l => l.length))).toBeLessThanOrEqual(60)
+  const note = lines.filter(l => /^│ │ (failed |       )\S/.test(l)).join(' ')
+  expect(note).toContain('could not reach')
+  expect(note).toContain('and so on')
+  const long = Array.from({ length: 10 }, (_, i) => `part${i + 1}`).join('\n')
+  const capped = textOf(frameOf(rows, [{ ok: true, text: long, at: 1 }], 60), 60).join('\n')
+  expect(capped).toContain('part4')
+  expect(capped).not.toContain('part5')
+  expect(capped).toContain('... 6 more lines')
+})
+
+test('blocked, asked and stale lines start with their accent word, and done is green', () => {
+  const { sections } = frameOf(busyRows(), [], 80)
+  const team = sections.find(s => s.title === 'team')
+  const first = (word: string) => team?.lines.find(l => l[0]?.text.trim() === word)?.[0]
+  expect(first('blocked')?.tone).toBe('error')
+  expect(first('asked')?.tone).toBe('warning')
+  expect(first('stale')?.tone).toBe('warning')
+  expect(first('done')?.tone).toBe('success')
+})
+
+test('the team section is left out when nobody is on the team, and notes only when there are some', () => {
+  const rows = rowsOf(PEERS, {}, NOW, 30 * MIN)
+  const titles = frameOf(rows, [], 80).sections.map(s => s.title)
+  expect(titles).toEqual(['other sessions'])
+  expect(frameOf(rows, NOTES, 80).sections.map(s => s.title)).toEqual(['other sessions', 'notes'])
+})
+
+test('with no other sessions the pane says so in one line', () => {
+  const text = textOf(frameOf([], [], 80), 80).join('\n')
+  expect(text).toContain('no other sessions')
+  expect(text).not.toContain('team')
+})
+
+test('the sessions table has aligned columns: name, state, quiet time and folder', () => {
+  const lines = textOf(frameOf(rowsOf(PEERS, {}, NOW, 30 * MIN), [], 80), 80)
+  const header = lines.find(l => l.includes('name') && l.includes('state'))
+  expect(header).toBeDefined()
+  const col = (l: string | undefined, word: string) => l?.indexOf(word) ?? -1
+  const a = lines.find(l => l.includes('quorum-63'))
+  const b = lines.find(l => l.includes('mnemos-9e'))
+  expect(col(a, 'working')).toBe(col(b, 'working'))
+  expect(col(header, 'state')).toBe(col(a, 'working'))
+  expect(col(header, 'folder')).toBe(col(lines.find(l => l.includes('lune-voice')), 'lune-voice'))
+  expect(col(header, 'quiet')).toBe(col(a, '2m'))
 })

@@ -19,6 +19,9 @@ export const SCAN_ARGV: string[] = ['sh', '-c', SCAN, 'fleet-board-scan']
 
 export const baseName = (dir: string): string => dir.split('/').filter(Boolean).pop() ?? dir
 
+// True when `dir` is `root` or inside it. The match is on a path boundary, so /a/proj-2 is not inside /a/proj.
+export const isInside = (dir: string, root: string): boolean => dir === root || dir.startsWith(root.endsWith('/') ? root : `${root}/`)
+
 const STATES: Record<string, PeerState> = { busy: 'working', idle: 'idle' }
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)

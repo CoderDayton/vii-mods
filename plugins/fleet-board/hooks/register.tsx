@@ -14,7 +14,7 @@ import type { ToolName } from '../src/tools'
 import { createTranscriptReader } from '../src/transcript'
 import { paneView } from '../src/ui'
 import type { Els } from '../src/ui'
-import { headline, rowsOf } from '../src/view'
+import { rowsOf } from '../src/view'
 
 const peersAtom = atom({ plugin: 'fleet-board', key: 'peers' } as const, [])
 const rosterAtom = atom({ plugin: 'fleet-board', key: 'roster' } as const, {})
@@ -220,7 +220,6 @@ export const register: Register = (on, options) => {
       els as Els,
       {
         columns: e.props.bodyColumns ?? e.viewport?.columns ?? DEFAULT_COLUMNS,
-        headline: headline(rows),
         rows,
         notes: (await read($, notesAtom)).slice(-NOTES_SHOWN),
       },

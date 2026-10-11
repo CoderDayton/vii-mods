@@ -1,15 +1,15 @@
 import type { Elements, RenderSurface } from 'claude-code'
 
 import type { Note } from './fleet'
-import { KEY_WIDTH, layoutOf } from './view'
-import type { Layout, Row } from './view'
+import { CLOSE_LABEL, frameOf, REFRESH_LABEL } from './view'
+import type { Line, Row, Tone } from './view'
 
 export type Els = Elements[Exclude<RenderSurface, 'mobile'>]
 
 // The pane shows the team and the other sessions. It has no write actions: the team changes through the fleet tools.
+// `columns` is the width the pane has; frameOf cuts every line to fit inside the borders and padding.
 export type PaneModel = {
   columns: number
-  headline: string
   rows: Row[]
   notes: Note[]
 }
@@ -19,106 +19,46 @@ export type PaneActions = {
   onClose: () => void
 }
 
-const STATE_WIDTH = 7
+const toneProps = (tone: Tone): { bold?: boolean; dimColor?: boolean; color?: string } => {
+  if (tone === 'plain') return {}
+  if (tone === 'bold') return { bold: true }
+  if (tone === 'dim') return { dimColor: true }
+  return { color: tone }
+}
 
-const rowColor = (r: Row): string | undefined => (r.isQuiet ? 'warning' : r.state === 'working' ? 'success' : undefined)
-
-const ellipsize = (text: string, max: number): string => (text.length <= max ? text : `${text.slice(0, Math.max(1, max - 1))}…`)
-
-// One session. A wide pane keeps it on one line; a narrow one puts the folder and role on a second line. A team
-// member's task and the first line of its reply go under it.
-const sessionRow = (els: Els, l: Layout, r: Row) => {
+// One line of the frame: its segments side by side, each with its own tone. A blank line keeps its height.
+const lineView = (els: Els, line: Line, key: string) => {
   const { Box, Text } = els
-  const color = rowColor(r)
-  const idle = r.state !== 'working'
-  const age = r.isQuiet ? `${r.age} !` : r.age
-  const hasRole = r.role !== '—'
-  const detail = r.task === '' ? '' : r.last === '' ? r.task : `${r.task} — ${r.last}`
+  if (line.length === 0) return <Text key={key}> </Text>
   return (
-    <Box key={r.id} flexDirection="column">
-      <Box columnGap={1}>
-        <Text color={color} dimColor={idle}>{r.state === 'working' ? '●' : '○'}</Text>
-        <Box width={l.name} flexShrink={0}>
-          <Text bold={hasRole} wrap="truncate-end">{ellipsize(r.name, l.name - KEY_WIDTH)}</Text>
-        </Box>
-        {l.wide && (
-          <Box width={l.folder} flexShrink={0}>
-            <Text dimColor wrap="truncate-end">{r.folder}</Text>
-          </Box>
-        )}
-        <Box width={STATE_WIDTH} flexShrink={0}>
-          <Text color={color} dimColor={idle}>{r.state}</Text>
-        </Box>
-        <Box width={l.age} flexShrink={0} justifyContent="flex-end">
-          <Text color={r.isQuiet ? 'warning' : undefined} dimColor={!r.isQuiet}>{age}</Text>
-        </Box>
-        {l.wide && <Text bold={hasRole} dimColor={!hasRole}>{r.role}</Text>}
-      </Box>
-      {!l.wide && (
-        <Box paddingLeft={KEY_WIDTH + 2}>
-          <Text dimColor wrap="truncate-end">{hasRole ? `${r.folder} · ${r.role}` : r.folder}</Text>
-        </Box>
-      )}
-      {detail !== '' && (
-        <Box paddingLeft={KEY_WIDTH + 2}>
-          <Text dimColor wrap="truncate-end">{detail}</Text>
-        </Box>
-      )}
+    <Box key={key}>
+      {line.map((s, i) => (
+        <Text key={String(i)} {...toneProps(s.tone)}>{s.text}</Text>
+      ))}
     </Box>
   )
 }
 
-const rowGroup = (els: Els, l: Layout, title: string, rows: readonly Row[]) => {
-  const { Box, Text } = els
-  return (
-    <Box flexDirection="column">
-      <Text bold>{title}</Text>
-      {rows.map(r => sessionRow(els, l, r))}
-    </Box>
-  )
-}
-
-// The team first: the sessions the boss has hired. The rest are the other sessions.
-const boardRows = (els: Els, m: PaneModel) => {
-  const { Box, Text } = els
-  const l = layoutOf(m.columns, m.rows)
-  const team = m.rows.filter(r => r.role !== '—')
-  const others = m.rows.filter(r => r.role === '—')
-  return (
-    <Box flexDirection="column" gap={1}>
-      {team.length > 0 ? rowGroup(els, l, 'Your team', team) : <Text dimColor>Your team is empty.</Text>}
-      {others.length > 0 && rowGroup(els, l, 'Other sessions', others)}
-    </Box>
-  )
-}
-
-const boardView = (els: Els, m: PaneModel, a: PaneActions) => {
-  const { Box, Text, Button } = els
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Text bold>{m.headline}</Text>
-      <Text dimColor>The boss hires, tasks and drops its team with the fleet tools. This pane only shows it.</Text>
-      {m.rows.length > 0 ? boardRows(els, m) : <Text dimColor>No other Claude session is running.</Text>}
-      <Box columnGap={2} flexWrap="wrap">
-        <Button key="refresh" label="Refresh" hotkey="r" onPress={a.onRefresh} />
-        <Button key="close" label="Close" hotkey="c" onPress={a.onClose} />
-      </Box>
-    </Box>
-  )
-}
-
+// Round dim borders throughout: the whole pane, then one box per section. The words carry the state; the colors only
+// back them up.
 export const paneView = (els: Els, m: PaneModel, a: PaneActions) => {
-  const { Box, Text } = els
+  const { Box, Text, Button } = els
+  const frame = frameOf(m.rows, m.notes, m.columns)
   return (
-    <Box flexDirection="column" paddingX={1} gap={1}>
-      {boardView(els, m, a)}
-      {m.notes.length > 0 && (
-        <Box flexDirection="column">
-          {m.notes.map(n => (
-            <Text key={`${n.at}-${n.text}`} color={n.ok ? 'success' : 'error'} wrap="truncate-end">{`${n.ok ? '✓' : '✗'} ${n.text}`}</Text>
-          ))}
+    <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1} gap={1}>
+      {lineView(els, frame.header, 'header')}
+      {frame.sections.map(s => (
+        <Box key={s.title} flexDirection="column" borderStyle="round" borderDimColor paddingX={1} paddingY={1}>
+          <Text dimColor>{s.title}</Text>
+          {s.lines.map((l, i) => lineView(els, l, `${s.title}-${i}`))}
         </Box>
-      )}
+      ))}
+      <Box>
+        <Button key="refresh" label={REFRESH_LABEL} hotkey="r" onPress={a.onRefresh} />
+        <Text>  </Text>
+        <Button key="close" label={CLOSE_LABEL} hotkey="c" onPress={a.onClose} />
+        <Text dimColor>  esc closes</Text>
+      </Box>
     </Box>
   )
 }

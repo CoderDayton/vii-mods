@@ -5,16 +5,27 @@ A read-only pane for the other Claude sessions you run. It shows who is working,
 Run `/fleet` to open the pane, and `/fleet close` to close it.
 
 ```
-7 sessions · 2 working · 1 on the team
-
-Your team
-  ○ quorum-63                     idle     2h    Research
-       task k3x9qa: done — Built the parser.
-Other sessions
-  ● glowseed-garden-16            working  1m
-  ○ claude-mods-82                idle     now
-
-[ Refresh ]  [ Close ]
+╭──────────────────────────────────────────────────╮
+│ fleet  3 sessions  1 working  1 on team          │
+│                                                  │
+│ ╭──────────────────────────────────────────────╮ │
+│ │                                              │ │
+│ │ team                                         │ │
+│ │ done    quorum-63  Research, ready  task k3  │ │
+│ │         Built the parser.                    │ │
+│ │                                              │ │
+│ ╰──────────────────────────────────────────────╯ │
+│                                                  │
+│ ╭──────────────────────────────────────────────╮ │
+│ │                                              │ │
+│ │ other sessions                               │ │
+│ │ name      state    quiet  folder             │ │
+│ │ glowseed  working  1m     garden             │ │
+│ │                                              │ │
+│ ╰──────────────────────────────────────────────╯ │
+│                                                  │
+│ [ refresh ]  [ close ]  esc closes               │
+╰──────────────────────────────────────────────────╯
 ```
 
 ## The pane
@@ -23,7 +34,13 @@ Sessions come from the registry Claude Code keeps in its config folder, so every
 
 The pane has two buttons: `r` refreshes, `c` closes. It has no input and no other action.
 
-A working session that has not changed state for 30 minutes gets a `!`. That is the one that went quiet.
+A working session that has not changed state for 30 minutes gets a `!` after its quiet time. That is the one that went quiet.
+
+Only sessions from the boss's own project are listed: those whose folder is the boss's folder or inside it. A sibling folder with a similar name (`/a/proj-2` next to `/a/proj`) is not inside it. If the scan has no entry for the boss, nothing is hidden. A team member stays in the team section wherever it runs. `fleet_hire` of a session outside the root returns an error that says so.
+
+A reply in the team section is shown whole, word-wrapped to the section under its status word, up to 12 lines and then a `... N more lines` line. A note wraps the same way up to 4 lines. Only the folder column of the sessions table is cut with an ellipsis.
+
+The pane is plain text and box-drawing characters, with dim borders and labels. The state word is always printed. A muted green marks `done`, red `blocked`, and yellow `asked`, `stale` and a quiet session. The team section appears only when the team has members, and the notes section only when there are notes.
 
 ## The boss's tools
 

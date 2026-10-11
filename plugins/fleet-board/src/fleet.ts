@@ -1,4 +1,4 @@
-import { parsePeers, SCAN_ARGV } from './peers'
+import { isInside, parsePeers, SCAN_ARGV } from './peers'
 import type { Peer } from './peers'
 import { briefing, DROP, taskMessage } from './roles'
 import type { Role } from './roles'
@@ -118,6 +118,9 @@ export const createFleet = (io: Io) => {
     return { ok, text }
   }
 
+  // The sessions the last scan found outside the boss's folder. Not listed, but named in the error when one is hired.
+  let outside: Peer[] = []
+
   // Scans in a row without a member's registry line, by member id. Reset by any scan that finds the member.
   const misses = new Map<string, number>()
 
@@ -129,9 +132,15 @@ export const createFleet = (io: Io) => {
     const scanned = parsePeers(scan.stdout)
     const mine = scanned.find(p => p.id === self)
     if (mine !== undefined) await io.state.boss.set(() => mine.name)
-    const peers = scanned
+    const everyone = scanned
       .filter(p => p.id !== self)
       .sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id))
+    // Only the boss's own project: its folder and what is inside it. Team members stay wherever they are, and
+    // without an entry for the boss nothing is hidden.
+    const root = mine?.dir ?? ''
+    const roster = await io.state.roster.get()
+    const peers = everyone.filter(p => root === '' || isInside(p.dir, root) || roster[p.id] !== undefined)
+    outside = everyone.filter(p => !peers.includes(p))
     await io.state.peers.set(() => peers)
     await dropMissing(io, misses, new Set(peers.map(p => p.id)))
     for (const [id, hire] of Object.entries(await io.state.roster.get())) {
@@ -208,7 +217,7 @@ export const createFleet = (io: Io) => {
     return note(true, `dropped ${peer.name} from the team`)
   }
 
-  return { refresh, task, brief, drop, note }
+  return { refresh, task, brief, drop, note, outside: (): readonly Peer[] => outside }
 }
 
 export type Fleet = ReturnType<typeof createFleet>
