@@ -39,6 +39,7 @@ export const index = async (argv: string[], io: Io, config: Config): Promise<Exi
   try {
     const report = await indexAll(store, {
       projectsRoot: config.projectsRoot,
+      fileTools: config.fileTools,
       embedder: values['no-embed'] === true ? null : embedderFor(config),
       onProgress: values.quiet === true ? undefined : progressPrinter(io),
     })

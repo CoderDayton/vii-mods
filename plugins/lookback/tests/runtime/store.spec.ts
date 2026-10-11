@@ -138,15 +138,16 @@ test('a project filter that holds a wildcard character is taken literally', () =
   expect(store.lexical(['deploy'], 10, { project: 'my_app' })).toHaveLength(1)
 })
 
-test('only prose entries long enough to mean something wait for a vector', () => {
+test('an entry of any kind waits for a vector when it is long enough to mean something', () => {
   store.addEntries([
     entry('yes'),
     entry('a question about the deploy pipeline'),
     entry('git status --short --branch', { kind: 'cmd' }),
+    entry('/work/app/src/a.ts\n- const a = 1\n+ const a = 2', { kind: 'edit' }),
+    entry('the cache may be stale after a deploy', { kind: 'thinking' }),
     entry('EACCES: permission denied, open the file', { kind: 'error' }),
   ])
-  const pending = store.pending(10)
-  expect(pending.map(p => p.text).sort()).toEqual(['EACCES: permission denied, open the file', 'a question about the deploy pipeline'])
+  expect(store.pending(10).map(p => p.text.slice(0, 12)).sort()).toEqual(['/work/app/sr', 'EACCES: perm', 'a question a', 'git status -', 'the cache ma'])
 })
 
 test('a vector search returns the nearest entry first, once per entry', () => {
@@ -214,6 +215,21 @@ test('a vector search honours the filters', () => {
   expect(store.semantic([1, 0], 10, { excludeSession: 'a' }).map(h => h.id)).toEqual([b!])
 })
 
+test('a vector search can rank some kinds apart, each side up to the limit, in one list', () => {
+  store.useVectors({ model: 'm', dimension: 2 })
+  const ids = store.addEntries([
+    entry('cmd one', { kind: 'cmd' }),
+    entry('cmd two', { kind: 'cmd' }),
+    entry('edit three', { kind: 'edit' }),
+    entry('said four'),
+    entry('said five', { kind: 'assistant' }),
+    entry('said six'),
+  ])
+  store.addChunks(ids.map((id, i) => ({ entry: id, seq: 0, vector: [1, 0.01 * (i + 1)] })))
+  expect(store.semantic([1, 0], 2, {}, 2).map(h => h.id)).toEqual([ids[0]!, ids[1]!])
+  expect(store.semantic([1, 0], 2, {}, 2, ['cmd', 'edit']).map(h => h.id)).toEqual([ids[0]!, ids[1]!, ids[3]!, ids[4]!])
+})
+
 test('a vector search of another length than the stored vectors finds nothing', () => {
   store.useVectors({ model: 'm', dimension: 2 })
   const [id] = store.addEntries([entry('near')])
@@ -263,7 +279,7 @@ test('the number of entries waiting for a vector is counted', () => {
 
 test('the stats count entries by kind, sessions and vectors', () => {
   store.addEntries([entry('x one', { session: 's1' }), entry('y two', { session: 's2', kind: 'cmd' })])
-  expect(store.stats()).toEqual({ entries: 2, sessions: 2, chunks: 0, byKind: { cmd: 1, user: 1 }, model: null, dimension: null })
+  expect(store.stats()).toEqual({ entries: 2, sessions: 2, agents: 0, chunks: 0, files: 0, redacted: 0, byKind: { cmd: 1, user: 1 }, model: null, dimension: null })
 })
 
 test('a store opened read-only can search and cannot write', () => {

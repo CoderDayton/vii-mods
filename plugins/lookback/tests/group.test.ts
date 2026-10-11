@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { groupBySession } from '../src/core/search/group'
+import { DEFAULT_TUNING } from '../src/core/search/tuning'
 import type { StoredEntry } from '../src/core/types'
 
 const DAY = 86_400_000
@@ -36,6 +37,36 @@ test('an entry that repeats the text of one already shown for the session is lef
   const entries = [entry(1, 'a', { text: 'Traceback: No module named PIL' }), entry(2, 'a', { text: '  traceback: no module named pil ' }), entry(3, 'a', { text: 'A different line' })]
   const fused = [{ id: 1, score: 0.03 }, { id: 2, score: 0.02 }, { id: 3, score: 0.01 }]
   expect(groupBySession(fused, entries, options)[0]!.entries.map(e => e.id)).toEqual([1, 3])
+})
+
+test('a session shows what was said beside the code that matched, not two lines of code', () => {
+  const entries = [entry(1, 'a', { kind: 'edit' }), entry(2, 'a', { kind: 'edit' }), entry(3, 'a', { kind: 'cmd' }), entry(4, 'a', { kind: 'assistant' })]
+  const fused = [{ id: 1, score: 0.9 }, { id: 2, score: 0.8 }, { id: 3, score: 0.7 }, { id: 4, score: 0.3 }]
+  expect(groupBySession(fused, entries, options)[0]!.entries.map(e => e.id)).toEqual([1, 4])
+})
+
+test('a session where only code matched shows its two best lines of code', () => {
+  const entries = [entry(1, 'a', { kind: 'edit' }), entry(2, 'a', { kind: 'cmd' }), entry(3, 'a', { kind: 'edit' })]
+  const fused = [{ id: 1, score: 0.9 }, { id: 2, score: 0.6 }, { id: 3, score: 0.5 }]
+  expect(groupBySession(fused, entries, options)[0]!.entries.map(e => e.id)).toEqual([1, 2])
+})
+
+test('a session far weaker than the best is left out, unless it holds a word of the question', () => {
+  const entries = [entry(1, 'best'), entry(2, 'near'), entry(3, 'far')]
+  const fused = [{ id: 1, score: 0.9 }, { id: 2, score: 0.5 }, { id: 3, score: 0.1 }]
+  const tuning = { ...DEFAULT_TUNING, minShare: 0.4 }
+  expect(groupBySession(fused, entries, { ...options, tuning }).map(h => h.session)).toEqual(['best', 'near'])
+  expect(groupBySession([{ id: 3, score: 0.001 }], entries, { ...options, tuning }).map(h => h.session)).toEqual(['far'])
+  expect(groupBySession(fused, entries, { ...options, tuning, worded: new Set([3]) }).map(h => h.session)).toEqual(['best', 'near', 'far'])
+})
+
+test('a session in a project the question names counts for more', () => {
+  const entries = [entry(1, 'other', { project: '/work/api' }), entry(2, 'named', { project: '/work/glowseed-garden' })]
+  const fused = [{ id: 1, score: 0.5 }, { id: 2, score: 0.48 }]
+  const tuning = { ...DEFAULT_TUNING, projectBoost: 1.2 }
+  expect(groupBySession(fused, entries, { ...options, tuning }).map(h => h.session)).toEqual(['other', 'named'])
+  expect(groupBySession(fused, entries, { ...options, tuning, terms: ['frame', 'garden'] }).map(h => h.session)).toEqual(['named', 'other'])
+  expect(groupBySession(fused, entries, { ...options, tuning, terms: ['gard'] }).map(h => h.session)).toEqual(['other', 'named'])
 })
 
 test('of two equal matches the newer session leads', () => {

@@ -68,7 +68,7 @@ test('a transcript that was rewritten shorter is read again from the start', asy
   expect((store.stats()).entries).toBe(1)
 })
 
-test('prose gets vectors, shell commands do not', async () => {
+test('prose and shell commands both get vectors', async () => {
   projects.write('proj', 's1', [
     userRow('How do I fix the build error in the parser?', { session: 's1' }),
     assistantRow('The lockfile was stale, so reinstall the packages.', { session: 's1' }),
@@ -76,10 +76,10 @@ test('prose gets vectors, shell commands do not', async () => {
   ])
   const embedder = new FakeEmbedder()
   const report = await run(embedder)
-  expect(report.chunks).toBe(2)
+  expect(report.chunks).toBe(3)
   expect(store.pending(10)).toEqual([])
   expect(embedder.calls.every(c => c.role === 'document')).toBe(true)
-  expect(embedder.calls.flatMap(c => c.texts).join(' ')).not.toContain('frozen-lockfile')
+  expect(embedder.calls.flatMap(c => c.texts).join(' ')).toContain('frozen-lockfile')
 })
 
 test('after a run the entries are found by meaning, also the ones a later run adds', async () => {

@@ -5,8 +5,8 @@ export type Clause = { sql: string; params: Params }
 
 const KIND = /^[a-z]+$/
 
-// The WHERE conditions of a filter over a table that has project, kind, ts and session columns, with
-// each value bound as a parameter. `alias` prefixes the column names.
+// The WHERE conditions of a filter over a table that has project, kind, ts, session and parent columns, with
+// each value bound as a parameter. Leaving a session out leaves out the sub-agents it started. `alias` prefixes the column names.
 export const clauseOf = (filter: Filter, alias = ''): Clause => {
   const col = (name: string): string => (alias === '' ? name : `${alias}.${name}`)
   const parts: string[] = []
@@ -25,7 +25,7 @@ export const clauseOf = (filter: Filter, alias = ''): Clause => {
     params.since = Math.trunc(filter.since)
   }
   if (filter.excludeSession !== undefined && filter.excludeSession !== '') {
-    parts.push(`${col('session')} <> $excludeSession`)
+    parts.push(`${col('session')} <> $excludeSession and ${col('parent')} <> $excludeSession`)
     params.excludeSession = filter.excludeSession
   }
   return { sql: parts.length === 0 ? 'true' : parts.join(' and '), params }

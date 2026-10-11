@@ -1,8 +1,9 @@
 import type { Hook, Register } from 'claude-code'
 
-import { TOOL_SPEC, cliEnv, recallContext, searchArgv, searchRequestOf } from '../src/core/call'
+import { NO_COMMAND, NO_FIX, TOOL_SPEC, argvOf, cliEnv, commandArgv, fixContext, recallContext, requestOf } from '../src/core/call'
 import { readOptions } from '../src/core/options'
 import type { Options } from '../src/core/options'
+import { errorGist } from '../src/core/search/fix'
 import { asksAboutPast } from '../src/core/search/intent'
 
 type Engine = Parameters<Hook<'session.start'>>[0]
@@ -11,6 +12,11 @@ const TOOL = `mcp__lookback__${TOOL_SPEC.name}`
 const INDEX_MS = 600_000
 const SEARCH_MS = 20_000
 const INSTALL_MS = 180_000
+// A failed command waits at most this long for what past sessions did about its error.
+const FIX_MS = 5000
+const FIX_LIMIT = 2
+// A shorter error text names nothing a past session could be found by.
+const MIN_GIST_CHARS = 12
 // A recall that rides along with a prompt shows fewer sessions than a search the model asks for.
 const RECALL_LIMIT = 3
 const NONE = 'No past session matches.'
@@ -46,28 +52,44 @@ const refreshIndex = async ($: Engine, options: Options): Promise<void> => {
   }
 }
 
-const commandArgv = (args: string, limit: number, exclude: string): string[] => {
-  if (args === '') return ['stats']
-  if (args === 'stats' || args === 'doctor' || args === 'index') return [args]
-  return searchArgv({ query: args }, { limit, exclude })
+// What past sessions ran after the error a failed command ended with, as a block for the model, or null.
+const pastFix = async ($: Engine, options: Options, gist: string): Promise<string | null> => {
+  try {
+    const argv = argvOf({ query: gist, mode: 'fix', limit: FIX_LIMIT }, { limit: FIX_LIMIT, exclude: await $.session.id() })
+    const run = await lookback($, options, argv, FIX_MS)
+    return run.code !== 0 || run.out === '' || run.out === NO_FIX ? null : fixContext(run.out)
+  } catch {
+    return null
+  }
 }
 
 export const register: Register = (on, raw) => {
   const options = readOptions(raw)
+  // The errors already looked up in this session: a command retried in a loop asks once.
+  const lookedUp = new Set<string>()
 
   on('session.start', async ($, e, next) => {
     await $.tool.register(TOOL_SPEC)
-    await $.command.register({ name: 'lookback', description: 'Search your past Claude Code sessions', argumentHint: '<question> | stats | doctor | index' })
+    await $.command.register({ name: 'lookback', description: 'Search your past Claude Code sessions', argumentHint: '<question> | show <id> | fix <error> | how <words> | blame <file> | files <id> | forget <id> | stats | doctor | index' })
     if (options.autoIndex) void refreshIndex($, options)
     return next(e)
   }).catch(($, e, next) => next(e))
 
   on('tool.call', async ($, e, next) => {
+    if (e.tool === 'Bash' && options.errorHints) {
+      const out = await next(e)
+      if (out.isError !== true) return out
+      const gist = errorGist(out.text ?? '')
+      if (gist.length < MIN_GIST_CHARS || lookedUp.has(gist)) return out
+      lookedUp.add(gist)
+      const found = await pastFix($, options, gist)
+      return found === null ? out : { ...out, context: [...(out.context ?? []), found] }
+    }
     if (e.tool !== TOOL) return next(e)
-    const request = searchRequestOf(e)
+    const request = requestOf(e)
     if ('error' in request) return asToolResult(`lookback: ${request.error}`, true)
     try {
-      const argv = searchArgv(request, { limit: options.limit, exclude: await $.session.id() })
+      const argv = argvOf(request, { limit: options.limit, exclude: await $.session.id() })
       const run = await lookback($, options, argv, SEARCH_MS)
       return run.code === 0 ? asToolResult(run.out) : asToolResult(run.err || `lookback exited with ${run.code}`, true)
     } catch {
@@ -77,8 +99,12 @@ export const register: Register = (on, raw) => {
 
   on('command.run', { command: 'lookback' }, async ($, e) => {
     try {
-      const argv = commandArgv(e.args.trim(), options.limit, await $.session.id())
-      const run = await lookback($, options, argv, argv[0] === 'index' ? INDEX_MS : SEARCH_MS)
+      const args = e.args.trim()
+      const me = await $.session.id()
+      const argv = commandArgv(args, options.limit, me)
+      let run = await lookback($, options, argv, argv[0] === 'index' ? INDEX_MS : SEARCH_MS)
+      // "how did we fix the build" is a question, not words of a command: with nothing found, search for it.
+      if (run.code === 0 && (run.out === NO_FIX || run.out === NO_COMMAND)) run = await lookback($, options, argvOf({ query: args }, { limit: options.limit, exclude: me }), SEARCH_MS)
       return { text: run.code === 0 ? run.out : run.err || `lookback exited with ${run.code}` }
     } catch {
       return { text: NO_BUN }
@@ -88,7 +114,7 @@ export const register: Register = (on, raw) => {
   on('prompt.submit', async ($, e, next) => {
     if (!options.autoRecall || e.origin.kind !== 'composer' || !asksAboutPast(e.text)) return next(e)
     try {
-      const argv = searchArgv({ query: e.text }, { limit: RECALL_LIMIT, exclude: await $.session.id() })
+      const argv = argvOf({ query: e.text }, { limit: RECALL_LIMIT, exclude: await $.session.id() })
       const run = await lookback($, options, argv, SEARCH_MS)
       if (run.code !== 0 || run.out === '' || run.out === NONE) return next(e)
       return next({ ...e, context: [...(e.context ?? []), recallContext(run.out)] })

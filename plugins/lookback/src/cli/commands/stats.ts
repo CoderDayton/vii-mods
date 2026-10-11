@@ -25,9 +25,13 @@ export const stats = async (argv: string[], io: Io, config: Config): Promise<Exi
       ['index', config.databasePath],
       ['entries', s.entries],
       ['sessions', s.sessions],
+      ['agents', s.agents],
       ['vectors', s.chunks],
       ['model', model],
       ['kinds', kinds],
+      ['files', s.files],
+      ['redacted', s.redacted],
+      ['forgotten', opened.store.forgotten().length],
     ]
     io.stdout(`${rows.map(([label, value]) => `${label.padEnd(10)}${value}`).join('\n')}\n`)
     return EXIT.ok

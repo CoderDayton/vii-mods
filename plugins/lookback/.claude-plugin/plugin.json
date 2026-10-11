@@ -1,7 +1,7 @@
 {
   "name": "lookback",
   "version": "0.1.0",
-  "description": "Searches your past Claude Code sessions by words and by meaning. A local DuckDB index and local Ollama embeddings, no cloud, no daemon.",
+  "description": "Searches your past Claude Code sessions by words and by meaning. A local SQLite index and local Ollama embeddings, no cloud, no daemon.",
   "userConfig": {
     "limit": {
       "type": "number",
@@ -22,6 +22,18 @@
       "title": "Index at session start",
       "description": "Read new transcript lines in the background when a session starts.",
       "default": true
+    },
+    "errorHints": {
+      "type": "boolean",
+      "title": "Hint after a failed command",
+      "description": "When a shell command fails, look up what past sessions ran after the same error and hand it to Claude with the result.",
+      "default": true
+    },
+    "fileTools": {
+      "type": "string",
+      "title": "MCP tools that name files",
+      "description": "MCP tools or whole servers whose calls read or change files, split by commas, such as mcp__semantic-cache-mcp or mcp__myserver__edit. Their file paths are recorded beside those of the built-in Read, Edit and Write. A change reads the transcripts again for files only.",
+      "default": ""
     },
     "embeddingModel": {
       "type": "string",

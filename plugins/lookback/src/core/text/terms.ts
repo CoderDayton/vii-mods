@@ -20,3 +20,9 @@ export const termsOf = (text: string, max: number = MAX_TERMS): string[] => {
   }
   return [...seen].slice(0, max)
 }
+
+// False for an empty list: a question with no words is held by nothing.
+export const holdsEvery = (text: string, terms: readonly string[]): boolean => {
+  const lower = text.toLowerCase()
+  return terms.length > 0 && terms.every(t => lower.includes(t))
+}

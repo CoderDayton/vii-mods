@@ -9,6 +9,9 @@ export type EmbeddingConfig = {
 export type Config = {
   projectsRoot: string
   databasePath: string
+  // MCP tools and servers whose calls name files, beside the built-in file tools. Empty for none; undefined
+  // when the caller names no setting, which keeps the one the index was built under.
+  fileTools: string | undefined
   embedding: EmbeddingConfig
 }
 
@@ -33,6 +36,7 @@ export const configFrom = (env: Env): Config => {
   return {
     projectsRoot: pick(env, 'LOOKBACK_PROJECTS') ?? join(home, '.claude', 'projects'),
     databasePath: pick(env, 'LOOKBACK_DB') ?? join(data, 'lookback', 'index.sqlite'),
+    fileTools: env.LOOKBACK_FILE_TOOLS,
     embedding: {
       baseURL: pick(env, 'LOOKBACK_EMBEDDING_URL') ?? DEFAULT_URL,
       model: pick(env, 'LOOKBACK_EMBEDDING_MODEL') ?? DEFAULT_MODEL,

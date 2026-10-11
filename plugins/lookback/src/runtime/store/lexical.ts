@@ -8,14 +8,14 @@ export type LexicalQuery = { sql: string; params: Params }
 
 const HAS_WORD = /[\p{L}\p{N}]/u
 
-// The FTS5 query for a list of terms: any of them, each as a quoted phrase so nothing in it reads as query
-// syntax, and each open at the end so "cache" also finds "cached" and "CachedResolver". Null when no term
-// holds a letter or a digit, which FTS5 cannot match.
-export const matchExpression = (terms: readonly string[]): string | null => {
+// The FTS5 query for a list of terms: any of them, or all of them, each as a quoted phrase so nothing in it
+// reads as query syntax, and each open at the end so "cache" also finds "cached" and "CachedResolver". Null
+// when no term holds a letter or a digit, which FTS5 cannot match.
+export const matchExpression = (terms: readonly string[], join: 'OR' | 'AND' = 'OR'): string | null => {
   const phrases = [...new Set(terms.map(t => t.toLowerCase().trim()).filter(t => HAS_WORD.test(t)))]
     .slice(0, MAX_TERMS)
     .map(t => `"${t.replaceAll('"', '""')}"*`)
-  return phrases.length === 0 ? null : phrases.join(' OR ')
+  return phrases.length === 0 ? null : phrases.join(` ${join} `)
 }
 
 // A BM25 ranking of the entries that hold any of the terms, best first. FTS5 reports a better match as a

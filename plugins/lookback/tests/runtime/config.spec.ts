@@ -6,6 +6,7 @@ test('the defaults put the index under the data folder and read the Claude Code 
   expect(configFrom({ HOME: '/home/u' })).toEqual({
     projectsRoot: '/home/u/.claude/projects',
     databasePath: '/home/u/.local/share/lookback/index.sqlite',
+    fileTools: undefined,
     embedding: { baseURL: 'http://localhost:11434/v1', model: 'nomic-embed-text', apiKey: 'ollama' },
   })
 })
@@ -22,13 +23,20 @@ test('LOOKBACK_ variables override every setting, and an empty one counts as uns
     LOOKBACK_EMBEDDING_URL: 'http://gpu-box:11434/v1',
     LOOKBACK_EMBEDDING_MODEL: 'mxbai-embed-large',
     LOOKBACK_EMBEDDING_KEY: 'secret',
+    LOOKBACK_FILE_TOOLS: 'mcp__files',
   })
   expect(config).toEqual({
     projectsRoot: '/t/projects',
     databasePath: '/t/index.sqlite',
+    fileTools: 'mcp__files',
     embedding: { baseURL: 'http://gpu-box:11434/v1', model: 'mxbai-embed-large', apiKey: 'secret' },
   })
   expect(configFrom({ HOME: '/home/u', LOOKBACK_EMBEDDING_MODEL: '' }).embedding.model).toBe('nomic-embed-text')
+})
+
+test('the file tools are unset when the variable is, and none when it is empty', () => {
+  expect(configFrom({ HOME: '/home/u' }).fileTools).toBeUndefined()
+  expect(configFrom({ HOME: '/home/u', LOOKBACK_FILE_TOOLS: '' }).fileTools).toBe('')
 })
 
 test('a missing HOME is an error, not a path under the working directory', () => {

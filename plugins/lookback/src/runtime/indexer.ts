@@ -1,6 +1,7 @@
 import { chunksOf } from '../core/text/chunk'
-import { entriesOf } from '../core/transcript/entries'
-import type { Entry } from '../core/types'
+import { entriesOfRow, rowOf } from '../core/transcript/entries'
+import { editsOfRow, fileToolsOf, touchesOfRow } from '../core/transcript/touches'
+import type { FileTools } from '../core/transcript/touches'
 import { EmbeddingUnavailableError } from './embedding/embedder'
 import type { Embedder } from './embedding/embedder'
 import type { Store } from './store/store'
@@ -16,6 +17,9 @@ export type Progress = {
 
 export type IndexOptions = {
   projectsRoot: string
+  // MCP tools and servers whose calls name files; see fileToolsOf. Left out, the index keeps the setting it
+  // was built under, so a run by hand does not undo what the mod set.
+  fileTools?: string
   // Without one the index holds keywords only.
   embedder: Embedder | null
   onProgress?: (progress: Progress) => void
@@ -57,16 +61,42 @@ export const indexAll = async (store: Store, options: IndexOptions): Promise<Ind
   return report
 }
 
+// Reads again, for files and edits only, the part of each transcript that was read under another file-tools
+// setting. The other entries and their vectors are not touched.
+const rereadFileRecords = async (store: Store, files: readonly TranscriptFile[], isFileTool: FileTools): Promise<void> => {
+  for (const file of files) {
+    const state = store.fileState(file.path)
+    if (state === null || state.offset === 0) continue
+    const touches = []
+    const edits = []
+    for await (const batch of newLines(file.path, 0, state.offset)) {
+      const rows = batch.lines.map(rowOf)
+      touches.push(...rows.flatMap(row => touchesOfRow(row, isFileTool)))
+      edits.push(...rows.flatMap(row => editsOfRow(row, isFileTool)))
+    }
+    store.replaceFileRecords(file.path, touches, edits)
+  }
+}
+
 const readTranscripts = async (store: Store, options: IndexOptions, report: IndexReport): Promise<void> => {
-  const jobs = jobsFor(store, await listTranscripts(options.projectsRoot))
+  const files = await listTranscripts(options.projectsRoot)
+  const jobs = jobsFor(store, files)
+  const setting = options.fileTools ?? store.fileTools ?? ''
+  const isFileTool = fileToolsOf(setting)
+  if (store.fileTools !== setting) {
+    await rereadFileRecords(store, files, isFileTool)
+    store.fileTools = setting
+  }
   const total = jobs.reduce((sum, j) => sum + j.file.size - j.from, 0)
   let done = 0
   for (const { file, from } of jobs) {
     report.files++
     let pos = from
     for await (const batch of newLines(file.path, from, file.size)) {
-      const entries: Entry[] = batch.lines.flatMap(entriesOf)
-      store.ingest(file.path, entries, { size: file.size, offset: batch.end })
+      const rows = batch.lines.map(rowOf)
+      const entries = rows.flatMap(row => [...entriesOfRow(row), ...editsOfRow(row, isFileTool)])
+      const touches = rows.flatMap(row => touchesOfRow(row, isFileTool))
+      store.ingest(file.path, entries, { size: file.size, offset: batch.end }, touches)
       report.entries += entries.length
       done += batch.end - pos
       pos = batch.end

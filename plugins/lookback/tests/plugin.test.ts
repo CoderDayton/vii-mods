@@ -4,6 +4,9 @@ const LIVE = { cwd: '/work', surface: 'terminal' as const, isInteractive: true }
 const COMPOSER = { kind: 'composer' as const }
 const NONE = 'No past session matches.'
 const FOUND = '2026-10-09  claude-mods  d18dbf28\n  assistant The doubled brackets are fixed.'
+const NO_FIX = 'No past session got past this error.'
+const FIXED = "2026-09-28  app  45b0ec34\n  error     ModuleNotFoundError: No module named 'PIL'\n  then ran  pip install pillow"
+const TRACE = "Exit code 1\nTraceback (most recent call last):\n  File \"a.py\", line 2\nModuleNotFoundError: No module named 'PIL'"
 
 type Call = { argv: readonly string[]; cwd?: string; env?: Record<string, string> }
 
@@ -20,7 +23,10 @@ const world = (on: Parameters<typeof mock.clock>[0]) => {
     err: '',
     code: 0,
     bunMissing: false,
+    // What the engine answers a Bash call with.
+    bash: { result: { stdout: 'ok' }, text: 'ok' } as Record<string, unknown>,
   }
+  on('tool.call', () => w.bash as never)
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'me' }))
   on('fs.exists', () => ({ value: w.installed }) as never)
@@ -78,7 +84,7 @@ test('starting a session updates the index in the background', async ($, on) => 
   expect(cli(w).map(subcommand)).toEqual(['index'])
   expect(cli(w)[0]?.argv.at(-1)).toBe('--quiet')
   expect(cli(w)[0]?.argv[1]?.endsWith('bin/lookback.ts')).toBe(true)
-  expect(cli(w)[0]?.env).toEqual({ LOOKBACK_EMBEDDING_MODEL: 'nomic-embed-text', LOOKBACK_EMBEDDING_URL: 'http://localhost:11434/v1' })
+  expect(cli(w)[0]?.env).toEqual({ LOOKBACK_EMBEDDING_MODEL: 'nomic-embed-text', LOOKBACK_EMBEDDING_URL: 'http://localhost:11434/v1', LOOKBACK_FILE_TOOLS: '' })
 })
 
 test('the packages are installed first when they are missing', async ($, on) => {
@@ -140,6 +146,92 @@ test('a search that fails is answered as an error with the reason', async ($, on
   const out = await callTool($, { query: 'anything' })
   expect(out.isError).toBe(true)
   expect(out.result).toContain('lookback index')
+})
+
+const bash = async ($: Engine, command = 'python a.py') => (await $.tool.call({ tool: 'Bash', tool_use_id: 'b', command } as never)) as { context?: readonly string[]; isError?: boolean; text?: string }
+
+const started = async ($: Engine, on: Parameters<typeof mock.clock>[0]) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  await settle()
+  w.calls.length = 0
+  return w
+}
+
+test('a shell command that fails gets what past sessions ran after the same error', async ($, on) => {
+  const w = await started($, on)
+  w.bash = { isError: true, result: TRACE, text: TRACE }
+  w.out = FIXED
+  const out = await bash($)
+  expect(out.isError).toBe(true)
+  expect(out.text).toBe(TRACE)
+  expect(out.context).toHaveLength(1)
+  expect(out.context?.[0]).toContain('<lookback-fix>')
+  expect(out.context?.[0]).toContain('pip install pillow')
+  expect(cli(w)[0]?.argv.slice(2)).toEqual(['fix', '--limit', '2', '--exclude', 'me', '--', "ModuleNotFoundError: No module named 'PIL'"])
+})
+
+test('the same error is looked up once in a session', async ($, on) => {
+  const w = await started($, on)
+  w.bash = { isError: true, result: TRACE, text: TRACE }
+  w.out = FIXED
+  await bash($)
+  const again = await bash($)
+  expect(again.context).toBeUndefined()
+  expect(cli(w)).toHaveLength(1)
+})
+
+test('a command that works, an error no session got past and a lookup that fails add nothing', async ($, on) => {
+  const w = await started($, on)
+  expect((await bash($)).context).toBeUndefined()
+  expect(cli(w)).toEqual([])
+
+  w.bash = { isError: true, result: TRACE, text: TRACE }
+  w.out = NO_FIX
+  expect((await bash($)).context).toBeUndefined()
+
+  w.bash = { isError: true, result: 'fatal error: disk quota exceeded', text: 'fatal error: disk quota exceeded' }
+  w.code = 1
+  const failed = await bash($)
+  expect(failed.context).toBeUndefined()
+  expect(failed.text).toBe('fatal error: disk quota exceeded')
+
+  w.bash = { isError: true, result: 'boom', text: 'boom' }
+  w.calls.length = 0
+  await bash($)
+  expect(cli(w)).toEqual([])
+})
+
+test('error hints can be switched off', { options: { errorHints: false } }, async ($, on) => {
+  const w = await started($, on)
+  w.bash = { isError: true, result: TRACE, text: TRACE }
+  w.out = FIXED
+  expect((await bash($)).context).toBeUndefined()
+  expect(cli(w)).toEqual([])
+})
+
+test('the model opens a session, asks for a fix and asks for a command through the same tool', async ($, on) => {
+  const w = await started($, on)
+  await callTool($, { session: 'd18dbf28', offset: 60 })
+  await callTool($, { query: 'ENOENT', mode: 'fix' })
+  await callTool($, { query: 'run tests', mode: 'how' })
+  await callTool($, { query: 'brackets', offset: 5 })
+  expect(cli(w).map(c => c.argv.slice(2, 5).join(' '))).toEqual(['show --offset 60', 'fix --limit 5', 'how --exclude me', 'search --limit 5'])
+  expect(cli(w)[3]?.argv).toContain('--offset')
+})
+
+test('/lookback fix and how fall back to a search when they find nothing', async ($, on) => {
+  const w = await started($, on)
+  const run = async (args: string) => ((await $.command.run({ command: 'lookback', args } as never)) as { text: string }).text
+  w.out = NO_FIX
+  expect(await run('fix the double brackets')).toBe(NO_FIX)
+  expect(cli(w).map(subcommand)).toEqual(['fix', 'search'])
+  expect(cli(w)[1]?.argv.at(-1)).toBe('fix the double brackets')
+
+  w.calls.length = 0
+  w.out = FIXED
+  expect(await run('fix ModuleNotFoundError PIL')).toBe(FIXED)
+  expect(cli(w).map(subcommand)).toEqual(['fix'])
 })
 
 test('/lookback with a question searches, with nothing shows the index, and index and doctor run', async ($, on) => {

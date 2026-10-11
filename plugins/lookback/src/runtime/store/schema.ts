@@ -1,10 +1,12 @@
 // Bump when a table below changes shape. An index written under another version is rebuilt from the transcripts.
-export const SCHEMA_VERSION = '2'
+export const SCHEMA_VERSION = '8'
 
 // Stems words ("fixing" finds "fixed") and splits on punctuation, so a path or a dotted name is a phrase.
 const TOKENIZER = 'porter unicode61'
 
-export const TABLES = ['chunks', 'entries_fts', 'entries', 'files', 'meta'] as const
+// The tables a rebuild drops. `forgotten` is not one: it is the user's word, not read from the transcripts,
+// so a new shape for it needs a migration.
+export const TABLES = ['chunks', 'entries_fts', 'entries', 'touches', 'files', 'meta'] as const
 
 export const SCHEMA = `
   create table if not exists meta (
@@ -18,10 +20,18 @@ export const SCHEMA = `
     offset integer not null
   ) without rowid;
 
+  create table if not exists forgotten (
+    session text primary key,
+    project text not null,
+    at integer not null,
+    sources text not null
+  ) without rowid;
+
   create table if not exists entries (
     id integer primary key,
     source text not null,
     session text not null,
+    parent text not null default '',
     project text not null,
     kind text not null,
     ts integer not null,
@@ -29,6 +39,7 @@ export const SCHEMA = `
   );
   create index if not exists entries_session on entries (session);
   create index if not exists entries_source on entries (source);
+  create index if not exists entries_parent on entries (parent) where parent <> '';
 
   create virtual table if not exists entries_fts using fts5 (
     text,
@@ -42,6 +53,21 @@ export const SCHEMA = `
   create trigger if not exists entries_fts_delete after delete on entries begin
     insert into entries_fts (entries_fts, rowid, text) values ('delete', old.id, old.text);
   end;
+
+  create table if not exists touches (
+    id integer primary key,
+    source text not null,
+    session text not null,
+    parent text not null default '',
+    project text not null,
+    ts integer not null,
+    path text not null,
+    action text not null,
+    tool text not null
+  );
+  create index if not exists touches_path on touches (path);
+  create index if not exists touches_session on touches (session);
+  create index if not exists touches_source on touches (source);
 
   create table if not exists chunks (
     id integer primary key,
