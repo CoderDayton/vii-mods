@@ -2,14 +2,25 @@ import type { Crowd } from './diff'
 import { tallyOf } from './judge'
 import type { Judged } from './judge'
 
-const MAX_SHOWN = 64
-
-const clip = (s: string): string => (s.length > MAX_SHOWN ? `${s.slice(0, MAX_SHOWN - 1)}…` : s)
 const plural = (n: number, one: string): string => `${n} ${one}${n === 1 ? '' : 's'}`
-const at = (j: Judged): string => `L${j.line}`.padEnd(5)
 
-const closing = (allowDocs: boolean): string =>
-  `A comment earns its place when it tells the reader what the code cannot: a measured figure, a pitfall, or a rule that must hold.${allowDocs ? ' Docstrings are fine.' : ''}`
+// Line numbers as text, with lines in a row as one range: L1, L3-5.
+const linesOf = (judged: readonly Judged[]): string => {
+  const lines = judged.map(j => j.line)
+  const out: string[] = []
+  for (let from = 0; from < lines.length; ) {
+    let to = from
+    while (lines[to + 1] === lines[to]! + 1) to++
+    out.push(to === from ? `L${lines[from]}` : `L${lines[from]}-${lines[to]}`)
+    from = to + 1
+  }
+  return out.join(', ')
+}
+
+const byFault = (noise: readonly Judged[]): string =>
+  [...new Set(noise.map(j => j.why))].map(why => `${linesOf(noise.filter(j => j.why === why))} (${why})`).join(', ')
+
+const closing = (allowDocs: boolean): string => `A comment should say what the code cannot: a figure, a pitfall or a rule.${allowDocs ? ' Docstrings are fine.' : ''}`
 
 // How many of a file's new comment lines Claude is asked to act on: the noise, and the plain lines
 // when they are over the limit or sit in a crowded stretch.
@@ -26,22 +37,15 @@ const fileLines = (path: string, judged: readonly Judged[], max: number, crowd: 
   const plain = judged.filter(j => j.kind === 'plain')
   if (flaggedIn(judged, max, crowd) === 0) return null
 
-  const out = [`smart-comments: ${plural(tally.keep + tally.plain + tally.noise, 'new comment line')} in ${path}.`]
-  if (noise.length > 0) {
-    out.push(`Delete ${noise.length === 1 ? 'this one, or rewrite it' : `these ${noise.length}, or rewrite them`} to say what the code cannot:`)
-    for (const j of noise) out.push(`  ${at(j)} ${j.why.padEnd(20)}  ${clip(j.raw)}`)
-  }
+  const kept = judged.filter(j => j.kind === 'keep')
+  const fine = kept.length === 0 ? '' : `; ${linesOf(kept)} ${kept.length === 1 ? 'is' : 'are'} fine`
+  const out = [`smart-comments: ${plural(tally.keep + tally.plain + tally.noise, 'new comment line')} in ${path}${fine}.`]
+  if (noise.length > 0) out.push(`Delete or rewrite ${byFault(noise)}.`)
   if (plain.length > max) {
-    const stay = max === 0 ? 'Delete them:' : `Keep the ${max === 1 ? 'one' : max} a reader needs most:`
-    out.push(`${plural(plain.length, 'line')} ${plain.length === 1 ? 'adds' : 'add'} little, and the limit is ${max}. ${stay}`)
-    for (const j of plain) out.push(`  ${at(j)} ${clip(j.raw)}`)
+    const stay = max === 0 ? 'delete' : `keep ${max === 1 ? 'one' : max} of`
+    out.push(`${plural(plain.length, 'line')} ${plain.length === 1 ? 'adds' : 'add'} little, and the limit is ${max}: ${stay} ${linesOf(plain)}.`)
   } else if (crowd !== null && plain.length > 0) {
-    out.push(`Lines ${crowd.from} to ${crowd.to} are crowded: ${crowd.comments} of ${crowd.lines} lines are comments that add little. Add no more there:`)
-    for (const j of plain) out.push(`  ${at(j)} ${clip(j.raw)}`)
-  }
-  const kept = judged.filter(j => j.kind === 'keep').map(j => `L${j.line}`)
-  if (kept.length > 0) {
-    out.push(`Leave ${kept.join(', ')} as ${kept.length === 1 ? 'it is: it records' : 'they are: they record'} what the code cannot say.`)
+    out.push(`L${crowd.from}-${crowd.to} is crowded, ${crowd.comments} of ${crowd.lines} lines are comments that add little: add no more like ${linesOf(plain)}.`)
   }
   return out
 }
@@ -63,5 +67,5 @@ export type FileReport = { path: string; judged: readonly Judged[]; max: number 
 export const turnPrompt = (files: readonly FileReport[], allowDocs: boolean): string | null => {
   const blocks = files.map(f => fileLines(f.path, f.judged, f.max, null)).filter(b => b !== null)
   if (blocks.length === 0) return null
-  return [FOLLOW_UP, ...blocks.flat(), closing(allowDocs), 'Change these lines and nothing else.'].join('\n')
+  return [FOLLOW_UP, ...blocks.flat(), `${closing(allowDocs)} Change these lines and nothing else.`].join('\n')
 }

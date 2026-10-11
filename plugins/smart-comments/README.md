@@ -16,11 +16,9 @@ A line count cannot tell a good comment from a bad one. This mod charges a comme
 Claude is told which lines to delete and why:
 
 ```text
-smart-comments: 3 new comment lines in src/a.ts.
-Delete these 2, or rewrite them to say what the code cannot:
-  L1    repeats the code      // check the cache
-  L5    tells the edit story  // Now uses a Map
-Leave L3 as it is: it records what the code cannot say.
+smart-comments: 3 new comment lines in src/a.ts; L3 is fine.
+Delete or rewrite L1 (repeats the code), L5 (tells the edit story).
+A comment should say what the code cannot: a figure, a pitfall or a rule. Docstrings are fine.
 ```
 
 ## How a comment is judged

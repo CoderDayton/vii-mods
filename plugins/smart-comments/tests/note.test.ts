@@ -19,12 +19,9 @@ const judged = judgeFile('src/a.ts', CODE, true)
 test('the note names each line to delete and why, and the lines to leave', () => {
   expect(editNote({ path: 'src/a.ts', judged, max: 3, crowd: null, allowDocs: true })).toBe(
     [
-      'smart-comments: 3 new comment lines in src/a.ts.',
-      'Delete these 2, or rewrite them to say what the code cannot:',
-      '  L1    repeats the code      // check the cache',
-      '  L5    tells the edit story  // Now uses a Map',
-      'Leave L3 as it is: it records what the code cannot say.',
-      'A comment earns its place when it tells the reader what the code cannot: a measured figure, a pitfall, or a rule that must hold. Docstrings are fine.',
+      'smart-comments: 3 new comment lines in src/a.ts; L3 is fine.',
+      'Delete or rewrite L1 (repeats the code), L5 (tells the edit story).',
+      'A comment should say what the code cannot: a figure, a pitfall or a rule. Docstrings are fine.',
     ].join('\n'),
   )
 })
@@ -37,9 +34,18 @@ test('no note when nothing trips', () => {
   expect(turnPrompt([{ path: 'a.ts', judged: clean, max: 3 }], true)).toBe(null)
 })
 
-test('one line to delete is offered a rewrite too', () => {
-  const one = judgeFile('a.ts', '// check the cache\nconst hit = cache.get(id)', true)
-  expect(editNote({ path: 'a.ts', judged: one, max: 3, crowd: null, allowDocs: true })).toContain('Delete this one, or rewrite it to say what the code cannot:')
+test('lines with one fault are named together, and lines in a row as a range', () => {
+  const code = ['// check the cache', '// get the cache', 'const hit = cache.get(id)', '// 40 ms p99 on the 2024 box', '// 64 is the page size of the store', '// The store rejects more than 64 at once', 'const LIMIT = 64'].join('\n')
+  const note = editNote({ path: 'a.ts', judged: judgeFile('a.ts', code, true), max: 3, crowd: null, allowDocs: true })
+  expect(note).toContain('Delete or rewrite L1-2 (repeats the code).')
+  expect(note?.split('\n')).toHaveLength(3)
+})
+
+test('a long list of comments still gives a note of three lines', () => {
+  const code = Array.from({ length: 12 }, (_, i) => `// Tail of path ${String.fromCharCode(97 + i)}\nstep${i}()`).join('\n')
+  const note = editNote({ path: 'a.ts', judged: judgeFile('a.ts', code, true), max: 3, crowd: null, allowDocs: true })
+  expect(note?.split('\n')).toHaveLength(3)
+  expect(note).toContain('12 lines add little, and the limit is 3: keep 3 of L1, L3, L5, L7, L9, L11, L13, L15, L17, L19, L21, L23.')
 })
 
 test('the count of flagged lines is the noise, plus the plain lines when they are over or crowded', () => {
@@ -55,18 +61,15 @@ test('plain lines past the limit are listed, with how many may stay', () => {
   expect(note).toBe(
     [
       'smart-comments: 2 new comment lines in a.ts.',
-      '2 lines add little, and the limit is 1. Keep the one a reader needs most:',
-      '  L1    // Tail of path a',
-      '  L3    // Tail of path b',
-      'A comment earns its place when it tells the reader what the code cannot: a measured figure, a pitfall, or a rule that must hold.',
+      '2 lines add little, and the limit is 1: keep one of L1, L3.',
+      'A comment should say what the code cannot: a figure, a pitfall or a rule.',
     ].join('\n'),
   )
 })
 
 test('a crowded stretch is named when the edit put a plain comment in it', () => {
   const note = editNote({ path: 'a.ts', judged: judgeFile('a.ts', PLAIN, true), max: 3, crowd: { from: 1, to: 12, comments: 6, lines: 12 }, allowDocs: true })
-  expect(note).toContain('Lines 1 to 12 are crowded: 6 of 12 lines are comments that add little. Add no more there:')
-  expect(note).toContain('  L1    // Tail of path a')
+  expect(note).toContain('L1-12 is crowded, 6 of 12 lines are comments that add little: add no more like L1, L3.')
   const kept = judgeFile('a.ts', '// 40 ms p99 on the 2024 box\nconst LIMIT = 64', true)
   expect(editNote({ path: 'a.ts', judged: kept, max: 3, crowd: { from: 1, to: 12, comments: 6, lines: 12 }, allowDocs: true })).toBe(null)
 })
@@ -75,10 +78,10 @@ test('the turn prompt lists every file that still trips, and asks for those line
   const clean = judgeFile('b.ts', '// 40 ms p99 on the 2024 box\nconst LIMIT = 64', true)
   const prompt = turnPrompt([{ path: 'src/a.ts', judged, max: 3 }, { path: 'b.ts', judged: clean, max: 3 }], true)
   expect(prompt).toContain('smart-comments: comments you added this turn need one more pass.')
-  expect(prompt).toContain('3 new comment lines in src/a.ts.')
-  expect(prompt).toContain('  L1    repeats the code      // check the cache')
+  expect(prompt).toContain('3 new comment lines in src/a.ts; L3 is fine.')
+  expect(prompt).toContain('L1 (repeats the code)')
   expect(prompt).not.toContain('b.ts')
-  expect(prompt).toContain('Change these lines and nothing else.')
+  expect(prompt?.split('\n').at(-1)).toBe('A comment should say what the code cannot: a figure, a pitfall or a rule. Docstrings are fine. Change these lines and nothing else.')
 })
 
 test('each file of the turn prompt has its own limit', () => {

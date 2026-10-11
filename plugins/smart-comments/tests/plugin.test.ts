@@ -102,7 +102,7 @@ test('an edit that adds a comment repeating the code sends Claude a note with th
   await $.session.start(LIVE)
   const out = await write($, w, '/work/src/a.ts', NOISY)
   expect(out.context?.join('\n')).toContain('smart-comments: 1 new comment line in /work/src/a.ts.')
-  expect(out.context?.join('\n')).toContain('  L1    repeats the code      // check the cache')
+  expect(out.context?.join('\n')).toContain('Delete or rewrite L1 (repeats the code).')
   expect(w.toasts).toEqual([])
 })
 
@@ -228,7 +228,7 @@ test('the turn is judged against the file as it was before the first edit', asyn
   expect((await write($, w, '/work/src/a.ts', `const a = 1\n${NOISY}const b = 2\n`, 'Edit')).context).toBeUndefined()
   await done($)
   await settle()
-  expect(w.prompts[1]).toContain('  L2    repeats the code      // check the cache')
+  expect(w.prompts[1]).toContain('Delete or rewrite L2 (repeats the code).')
 })
 
 test('a new prompt starts the count again, and a subagent or a cut-off turn sends nothing', async ($, on) => {
@@ -263,7 +263,7 @@ test('a file changed through a shell command that names it is checked when Claud
   await settle()
   expect(w.prompts.length).toBe(2)
   expect(w.prompts[1]).toContain('1 new comment line in src/a.ts.')
-  expect(w.prompts[1]).toContain('  L2    repeats the code      // check the cache')
+  expect(w.prompts[1]).toContain('Delete or rewrite L2 (repeats the code).')
   expect(w.prompts[1]).toContain('1 new comment line in src/new.ts.')
 })
 
