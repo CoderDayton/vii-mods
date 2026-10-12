@@ -1,0 +1,19 @@
+{
+  "name": "cues",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sound for Claude Code on Linux: key sounds and chimes.",
+  "scripts": {
+    "test": "claude plugin test .",
+    "test:runtime": "bun test tests/runtime",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "7.0.2"
+  }
+}

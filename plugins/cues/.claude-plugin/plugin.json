@@ -1,0 +1,5 @@
+{
+  "name": "cues",
+  "version": "0.1.0",
+  "description": "Sound for Claude Code on Linux: mechanical key sounds as you type, and a chime when you send a prompt, when the reply lands and when a turn fails."
+}

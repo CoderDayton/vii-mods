@@ -38,6 +38,12 @@
       "source": "./plugins/smart-comments",
       "description": "Reads each comment Claude adds, lets through the ones that tell a reader what the code cannot, skips docstrings, and names the lines to cut.",
       "category": "tools"
+    },
+    {
+      "name": "cues",
+      "source": "./plugins/cues",
+      "description": "Sound for Claude Code on Linux: mechanical key sounds as you type, and a chime when you send a prompt, when the reply lands and when a turn fails.",
+      "category": "tools"
     }
   ]
 }
