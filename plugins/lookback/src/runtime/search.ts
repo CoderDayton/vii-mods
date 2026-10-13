@@ -4,7 +4,7 @@ import type { Tuning } from '../core/search/tuning'
 import { groupBySession, names, newestFirst } from '../core/search/group'
 import type { SessionHit } from '../core/search/group'
 import { whenOf } from '../core/search/when'
-import { holdsEvery, termsOf } from '../core/text/terms'
+import { holdsEvery, MAX_TERMS, rarest, termsOf, wordsNeeded } from '../core/text/terms'
 import { CODE_KINDS, PROSE_KINDS } from '../core/types'
 import type { EntryKind, Filter, Ranked, StoredEntry } from '../core/types'
 import { withContext } from './context'
@@ -56,6 +56,8 @@ const NAMED_PROJECTS = 3
 const LATEST_SHARE = 0.5
 // How many sessions past the page a list by time counts.
 const LISTED_BEYOND = 50
+// A long question is read this far, and the rarest of its words are the ones searched.
+const READ_TERMS = 24
 
 // What the two searches found for a question, before any ranking: the lists, the entries they name, and how
 // many entries of each sort were asked for.
@@ -81,7 +83,9 @@ const merged = (lists: readonly Ranked[][]): Ranked[] => {
 // was used to build the index, or the server does not answer. A project folder the question names is searched
 // apart as well: its sessions may not say its name.
 export const retrieve = async (store: Store, embedder: Embedder | null, query: string, options: SearchOptions): Promise<Found> => {
-  const terms = [...new Set([...termsOf(query), ...(options.extraTerms ?? [])])]
+  const written = termsOf(query, READ_TERMS)
+  const kept = written.length > MAX_TERMS ? rarest(written, store.termCounts(written, [...PROSE_KINDS, ...CODE_KINDS]).counts, MAX_TERMS) : written
+  const terms = [...new Set([...kept, ...(options.extraTerms ?? [])])]
   const limit = options.limit ?? DEFAULT_LIMIT
   const asked = Math.max(CANDIDATES, (Math.max(0, options.offset ?? 0) + limit) * CANDIDATES_PER_SESSION)
 
@@ -106,7 +110,12 @@ export const retrieve = async (store: Store, embedder: Embedder | null, query: s
   }
 
   const ids = [...new Set([...words, ...meaning].map(r => r.id))]
-  return { terms, lists: { words, meaning }, entries: store.entries(ids), asked, semantic, named }
+  const entries = store.entries(ids)
+  // A question with topic words beside it has its own filter, so only a plain question holds word matches to a count.
+  const needed = (options.extraTerms?.length ?? 0) > 0 ? 1 : wordsNeeded(kept.length)
+  const lower = new Map(entries.map(e => [e.id, e.text.toLowerCase()]))
+  const enough = (r: Ranked): boolean => needed <= 1 || kept.filter(t => lower.get(r.id)?.includes(t)).length >= needed
+  return { terms, lists: { words: words.filter(enough), meaning }, entries, asked, semantic, named }
 }
 
 // Every session the searches found, best first: the two lists merged by score with a balance set for the
@@ -163,5 +172,5 @@ export const searchPast = async (store: Store, embedder: Embedder | null, query:
   const ranked = rank(found, scoped)
   const sessions = when.latest ? latestOf(ranked, found.named) : ranked
   const hits = pageOf(sessions)
-  return { hits, more: Math.max(0, sessions.length - offset - hits.length), terms, semantic: found.semantic }
+  return { hits, more: Math.max(0, sessions.length - offset - hits.length), terms: found.terms, semantic: found.semantic }
 }

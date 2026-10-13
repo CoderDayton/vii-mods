@@ -46,6 +46,28 @@ test('a span of time in the question limits the search and is not a word of it',
   expect(found.terms).toEqual(['pillow', 'install'])
 })
 
+test('a word match needs two fifths of the words of a question of three or more', async () => {
+  store.addEntries([
+    entry('the cache ttl is five minutes', { session: 'two' }),
+    entry('the cache was cleared', { session: 'one' }),
+  ])
+  const long = await ask('cache ttl expiry eviction policy', null, { keywordOnly: true })
+  expect(long.hits.map(h => h.session)).toEqual(['two'])
+  const short = await ask('cache ttl', null, { keywordOnly: true })
+  expect(short.hits.map(h => h.session).sort()).toEqual(['one', 'two'])
+})
+
+test('a long question keeps its rarest words, wherever they stand', async () => {
+  store.addEntries([
+    ...['alpha bravo charlie delta', 'echo foxtrot golf hotel', 'alpha golf india', 'bravo echo hotel'].map((text, i) => entry(text, { session: `common${i}` })),
+    entry('the zebrafish run', { session: 'rare' }),
+  ])
+  const found = await ask('alpha bravo charlie delta echo foxtrot golf hotel india zebrafish', null)
+  expect(found.terms).toHaveLength(8)
+  expect(found.terms).toContain('zebrafish')
+  expect(found.terms).not.toContain('hotel')
+})
+
 test('a question that is only about time lists the sessions of that time, newest first', async () => {
   const now = local(12, 15)
   store.addEntries([
