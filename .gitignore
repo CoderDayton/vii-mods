@@ -1,6 +1,21 @@
+# Written by Claude Code when it loads a plugin
 **/.claude-plugin/types/
 tsconfig.json
-node_modules/
 
-.DS_Store
+# Packages and build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Secrets
+.env
+.env.*
+
+# Logs, editors and the OS
 *.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
