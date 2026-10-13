@@ -29,6 +29,18 @@
       "description": "When a shell command fails, look up what past sessions ran after the same error and hand it to Claude with the result.",
       "default": true
     },
+    "sessionDigest": {
+      "type": "boolean",
+      "title": "List recent sessions at session start",
+      "description": "Put the 5 latest sessions of the folder, one line each with a title, in the system prompt, so Claude knows what was done here before.",
+      "default": true
+    },
+    "fileNotes": {
+      "type": "boolean",
+      "title": "Note a file's history on first touch",
+      "description": "The first time a session reads or changes a file that earlier sessions changed, hand Claude one short note: how many sessions changed it, and the latest ones with what was asked.",
+      "default": true
+    },
     "fileTools": {
       "type": "string",
       "title": "MCP tools that name files",

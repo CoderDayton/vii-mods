@@ -30,3 +30,7 @@ export const DEFAULT_TUNING: Tuning = {
   minShare: 0.4,
   projectBoost: 1.3,
 }
+
+// For a question about the past. Its answer is something Claude said; a prompt that sounds like the question
+// is seldom one.
+export const ASKED_TUNING: Tuning = { ...DEFAULT_TUNING, kindWeight: { ...DEFAULT_TUNING.kindWeight, user: 0.4, assistant: 1.15 } }

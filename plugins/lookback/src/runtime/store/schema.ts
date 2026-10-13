@@ -1,12 +1,19 @@
-// Bump when a table below changes shape. An index written under another version is rebuilt from the transcripts.
-export const SCHEMA_VERSION = '8'
+// Bump when a table below changes shape, and add the step from the version before to MIGRATIONS.
+export const SCHEMA_VERSION = '9'
+
+// What brings an index of each older version one version up, before SCHEMA runs. Claude Code deletes old
+// transcripts, so an index holds sessions that cannot be read again: a step keeps them. An index of a version
+// with no step here is emptied and rebuilt from the transcripts still on disk.
+export const MIGRATIONS: Readonly<Record<string, string>> = {
+  '8': "alter table entries add column key text not null default ''",
+}
 
 // Stems words ("fixing" finds "fixed") and splits on punctuation, so a path or a dotted name is a phrase.
 const TOKENIZER = 'porter unicode61'
 
 // The tables a rebuild drops. `forgotten` is not one: it is the user's word, not read from the transcripts,
 // so a new shape for it needs a migration.
-export const TABLES = ['chunks', 'entries_fts', 'entries', 'touches', 'files', 'meta'] as const
+export const TABLES = ['chunks', 'entries_fts', 'entries', 'touches', 'titles', 'files', 'meta'] as const
 
 export const SCHEMA = `
   create table if not exists meta (
@@ -35,8 +42,10 @@ export const SCHEMA = `
     project text not null,
     kind text not null,
     ts integer not null,
-    text text not null
+    text text not null,
+    key text not null default ''
   );
+  create unique index if not exists entries_key on entries (key) where key <> '';
   create index if not exists entries_session on entries (session);
   create index if not exists entries_source on entries (source);
   create index if not exists entries_parent on entries (parent) where parent <> '';
@@ -53,6 +62,12 @@ export const SCHEMA = `
   create trigger if not exists entries_fts_delete after delete on entries begin
     insert into entries_fts (entries_fts, rowid, text) values ('delete', old.id, old.text);
   end;
+
+  create table if not exists titles (
+    session text primary key,
+    title text not null,
+    custom integer not null
+  ) without rowid;
 
   create table if not exists touches (
     id integer primary key,

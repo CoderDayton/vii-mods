@@ -1,5 +1,5 @@
-import type { SessionSummary, StoredEntry } from '../types'
-import { dateOf, folderOf } from './format'
+import type { RecentSession, SessionSummary, StoredEntry } from '../types'
+import { dateOf, folderOf, headOf as hitHeadOf } from './format'
 
 export type SessionFormatOptions = {
   // How many entries of the session come before the ones given.
@@ -10,7 +10,10 @@ export type SessionFormatOptions = {
 
 const ELLIPSIS = '…'
 
-const timeOf = (ts: number): string => new Date(ts).toISOString().slice(11, 16)
+const timeOf = (ts: number): string => {
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 
 const count = (n: number): string => `${n} ${n === 1 ? 'entry' : 'entries'}`
 
@@ -46,3 +49,23 @@ export const formatSession = (summary: SessionSummary, entries: readonly StoredE
 }
 
 export const formatSessionList = (sessions: readonly SessionSummary[]): string => sessions.map(headOf).join('\n')
+
+const TOPIC_CHARS = 90
+const ENDED_CHARS = 140
+
+const flat = (text: string | null, max: number): string => {
+  const one = (text ?? '').replace(/\s+/g, ' ').trim()
+  return one.length <= max ? one : `${one.slice(0, max).trimEnd()}${ELLIPSIS}`
+}
+
+// A line for each session: its day, folder and short id, then its title, or else the start of its first prompt.
+// A second line says how it ended.
+export const formatRecent = (sessions: readonly RecentSession[]): string =>
+  sessions
+    .map(s => {
+      const topic = flat(s.title ?? s.asked, TOPIC_CHARS)
+      const ended = flat(s.ended, ENDED_CHARS)
+      const head = hitHeadOf({ ts: s.last, project: s.project, session: s.session, ...(topic === '' ? {} : { title: topic }) })
+      return ended === '' ? head : `${head}\n  ${'ended'.padEnd(9)} ${ended}`
+    })
+    .join('\n')

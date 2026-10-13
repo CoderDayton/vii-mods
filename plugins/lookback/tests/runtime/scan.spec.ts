@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { listTranscripts, newLines, sessionOf } from '../../src/runtime/transcript/scan'
+import { listTranscripts, newLines, sessionOf, sessionTranscripts } from '../../src/runtime/transcript/scan'
 
 let root = ''
 
@@ -42,6 +42,22 @@ test('a root that does not exist lists nothing', async () => {
 test('the session of a file is its name without the extension', () => {
   expect(sessionOf('/x/proj/d18dbf28-1111.jsonl')).toBe('d18dbf28-1111')
 })
+
+test('the transcripts of one session are its own file and those of its sub-agents', async () => {
+  mkdirSync(join(root, 'proj-a', 's1', 'subagents'), { recursive: true })
+  mkdirSync(join(root, 'proj-b'), { recursive: true })
+  writeFileSync(join(root, 'proj-a', 's1.jsonl'), '{}\n')
+  writeFileSync(join(root, 'proj-a', 's1', 'subagents', 'agent-1.jsonl'), '{}\n')
+  writeFileSync(join(root, 'proj-a', 's2.jsonl'), '{}\n')
+  writeFileSync(join(root, 'proj-b', 's3.jsonl'), '{}\n')
+
+  const files = await sessionTranscripts(root, 's1')
+  expect(files.map(f => f.path.slice(root.length + 1))).toEqual(['proj-a/s1.jsonl', 'proj-a/s1/subagents/agent-1.jsonl'])
+  expect(files[0]?.size).toBe(3)
+  expect(await sessionTranscripts(root, 'absent')).toEqual([])
+  expect(await sessionTranscripts(join(root, 'nowhere'), 's1')).toEqual([])
+})
+
 
 test('whole lines are read and the end of each batch is a byte offset after a newline', async () => {
   const path = join(root, 's.jsonl')

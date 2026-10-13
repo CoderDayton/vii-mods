@@ -1,11 +1,11 @@
 import { chunksOf } from '../core/text/chunk'
-import { entriesOfRow, rowOf } from '../core/transcript/entries'
+import { entriesOfRow, rowOf, titleOf } from '../core/transcript/entries'
 import { editsOfRow, fileToolsOf, touchesOfRow } from '../core/transcript/touches'
 import type { FileTools } from '../core/transcript/touches'
 import { EmbeddingUnavailableError } from './embedding/embedder'
 import type { Embedder } from './embedding/embedder'
 import type { Store } from './store/store'
-import { listTranscripts, newLines } from './transcript/scan'
+import { listTranscripts, newLines, sessionTranscripts } from './transcript/scan'
 import type { TranscriptFile } from './transcript/scan'
 
 export type Progress = {
@@ -38,13 +38,13 @@ const EMBED_ENTRIES = 128
 type Job = { file: TranscriptFile; from: number }
 
 // Where reading starts in each transcript: after the last line read, at the top for a new file or one that
-// shrank (its offset is past the end), and nowhere for a file whose size has not moved.
+// shrank (its offset is past the end), and nowhere for a file whose size has not moved. A file read from the
+// top takes the place of what was on record from it.
 const jobsFor = (store: Store, files: readonly TranscriptFile[]): Job[] => {
   const jobs: Job[] = []
   for (const file of files) {
     const state = store.fileState(file.path)
-    if (state === null) jobs.push({ file, from: 0 })
-    else if (file.size < state.offset) {
+    if (state === null || file.size < state.offset) {
       store.dropSource(file.path)
       jobs.push({ file, from: 0 })
     } else if (file.size !== state.size) jobs.push({ file, from: state.offset })
@@ -87,6 +87,10 @@ const readTranscripts = async (store: Store, options: IndexOptions, report: Inde
     await rereadFileRecords(store, files, isFileTool)
     store.fileTools = setting
   }
+  await readJobs(store, jobs, isFileTool, options.onProgress, report)
+}
+
+const readJobs = async (store: Store, jobs: readonly Job[], isFileTool: FileTools, onProgress: IndexOptions['onProgress'], report: IndexReport): Promise<void> => {
   const total = jobs.reduce((sum, j) => sum + j.file.size - j.from, 0)
   let done = 0
   for (const { file, from } of jobs) {
@@ -96,13 +100,58 @@ const readTranscripts = async (store: Store, options: IndexOptions, report: Inde
       const rows = batch.lines.map(rowOf)
       const entries = rows.flatMap(row => [...entriesOfRow(row), ...editsOfRow(row, isFileTool)])
       const touches = rows.flatMap(row => touchesOfRow(row, isFileTool))
-      store.ingest(file.path, entries, { size: file.size, offset: batch.end }, touches)
+      const titles = rows.flatMap(row => titleOf(row) ?? [])
+      store.ingest(file.path, entries, { size: file.size, offset: batch.end }, touches, titles)
       report.entries += entries.length
       done += batch.end - pos
       pos = batch.end
-      options.onProgress?.({ phase: 'transcripts', done, total })
+      onProgress?.({ phase: 'transcripts', done, total })
     }
   }
+}
+
+export type RefreshOptions = {
+  projectsRoot: string
+  session: string
+  embedder: Embedder | null
+  // How long new entries may take to embed. The ones left over wait for the next full run.
+  embedMs?: number
+}
+
+const REFRESH_EMBED_MS = 2500
+
+// Reads the new lines of one session's transcripts, and of its sub-agents', then embeds new entries while
+// time is left. It runs while a prompt waits, so vectors of another model stay as they are and the compact
+// copy of the vectors is not rebuilt: searches scan the vectors themselves until a full run.
+export const refreshSession = async (store: Store, options: RefreshOptions): Promise<IndexReport> => {
+  const report: IndexReport = { files: 0, entries: 0, chunks: 0, embeddingError: null }
+  const jobs = jobsFor(store, await sessionTranscripts(options.projectsRoot, options.session))
+  await readJobs(store, jobs, fileToolsOf(store.fileTools ?? ''), undefined, report)
+  const { embedder } = options
+  if (embedder === null || store.vectors?.model !== embedder.model) return report
+  const deadline = Date.now() + (options.embedMs ?? REFRESH_EMBED_MS)
+  try {
+    while (Date.now() < deadline) {
+      const batch = store.pending(EMBED_ENTRIES, options.session)
+      if (batch.length === 0) break
+      report.chunks += await embedBatch(store, embedder, batch)
+    }
+  } catch (error) {
+    if (!(error instanceof EmbeddingUnavailableError)) throw error
+    report.embeddingError = error.message
+  }
+  return report
+}
+
+const embedBatch = async (store: Store, embedder: Embedder, batch: readonly { id: number; text: string }[]): Promise<number> => {
+  const passages = batch.flatMap(e => chunksOf(e.text).map((text, seq) => ({ entry: e.id, seq, text })))
+  if (passages.length === 0) throw new Error('entries waiting for vectors have no text to embed')
+  const vectors = await embedder.embed(
+    passages.map(p => p.text),
+    'document',
+  )
+  store.addChunks(passages.map((p, i) => ({ entry: p.entry, seq: p.seq, vector: vectors[i]! })))
+  return passages.length
 }
 
 const embedPending = async (store: Store, embedder: Embedder, options: IndexOptions, report: IndexReport): Promise<void> => {
@@ -113,14 +162,7 @@ const embedPending = async (store: Store, embedder: Embedder, options: IndexOpti
     for (;;) {
       const batch = store.pending(EMBED_ENTRIES)
       if (batch.length === 0) return
-      const passages = batch.flatMap(e => chunksOf(e.text).map((text, seq) => ({ entry: e.id, seq, text })))
-      if (passages.length === 0) throw new Error('entries waiting for vectors have no text to embed')
-      const vectors = await embedder.embed(
-        passages.map(p => p.text),
-        'document',
-      )
-      store.addChunks(passages.map((p, i) => ({ entry: p.entry, seq: p.seq, vector: vectors[i]! })))
-      report.chunks += passages.length
+      report.chunks += await embedBatch(store, embedder, batch)
       done += batch.length
       options.onProgress?.({ phase: 'embedding', done, total })
     }

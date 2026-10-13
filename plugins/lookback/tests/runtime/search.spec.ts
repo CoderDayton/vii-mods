@@ -25,7 +25,57 @@ afterEach(() => {
 })
 
 const ask = (query: string, embedder: FakeEmbedder | null, extra: Partial<Parameters<typeof searchPast>[3]> = {}) =>
-  searchPast(store, embedder, query, { now: NOW, ...extra })
+  searchPast(store, embedder, query, { now: NOW, order: 'best', ...extra })
+
+const local = (day: number, hour = 12): number => new Date(2026, 9, day, hour).getTime()
+
+test('sessions are listed newest first, and best first when asked', async () => {
+  store.addEntries([
+    entry('pillow thumbnails', { session: 'old', ts: NOW - 2 * DAY }),
+    entry('the pillow package made a lot of long thumbnails for the gallery page in the end', { session: 'new', ts: NOW - DAY }),
+  ])
+  expect((await ask('pillow thumbnails', null)).hits.map(h => h.session)).toEqual(['old', 'new'])
+  expect((await ask('pillow thumbnails', null, { order: 'newest' })).hits.map(h => h.session)).toEqual(['new', 'old'])
+  expect((await searchPast(store, null, 'pillow thumbnails', { now: NOW })).hits[0]?.session).toBe('new')
+})
+
+test('a span of time in the question limits the search and is not a word of it', async () => {
+  store.addEntries([entry('pillow install on the build box', { session: 'sun', ts: local(11) }), entry('pillow install on the laptop', { session: 'sat', ts: local(10) })])
+  const found = await searchPast(store, null, 'pillow install yesterday', { now: local(12, 15) })
+  expect(found.hits.map(h => h.session)).toEqual(['sun'])
+  expect(found.terms).toEqual(['pillow', 'install'])
+})
+
+test('a question that is only about time lists the sessions of that time, newest first', async () => {
+  const now = local(12, 15)
+  store.addEntries([
+    entry('Make thumbnails', { kind: 'user', session: 'a', ts: local(11, 9) }),
+    entry('The thumbnails are made.', { session: 'a', ts: local(11, 10) }),
+    entry('The loader is renamed.', { session: 'b', ts: local(11, 14) }),
+    entry('Older work.', { session: 'c', ts: local(9) }),
+  ])
+  const found = await searchPast(store, null, 'what did we do yesterday', { now })
+  expect(found.hits.map(h => h.session)).toEqual(['b', 'a'])
+  expect(found.hits[1]?.entries[0]?.text).toBe('The thumbnails are made.')
+  expect((await searchPast(store, null, 'what did we do last session', { now, limit: 1 })).hits.map(h => h.session)).toEqual(['b'])
+  expect((await searchPast(store, null, 'what did we do', { now })).hits).toEqual([])
+  const fromB = await searchPast(store, null, 'what did we do last session', { now, limit: 1, sessionBefore: { session: 'b', ts: now } })
+  expect(fromB.hits.map(h => h.session)).toEqual(['a'])
+})
+
+test('a question that names a project folder and asks for the latest finds the newest sessions of that folder', async () => {
+  const filler = Array.from({ length: 70 }, (_, i) => entry('lunetrain work lunetrain work', { session: `f${i}`, project: '/work/other', ts: NOW - 40 * DAY }))
+  store.addEntries([
+    ...filler,
+    entry('The training loop work is faster now.', { session: 'loop', project: '/work/lunetrain', ts: NOW - 3 * DAY }),
+    entry('Loader mismatch work is done.', { session: 'loader', project: '/work/lunetrain', ts: NOW - 2 * DAY }),
+    entry('The latest news is nothing.', { session: 'news', project: '/work/other', ts: NOW - DAY }),
+    entry('Notes on the lunetrain work.', { session: 'agent', parent: 'loop', project: '/work/lunetrain', ts: NOW - DAY / 2 }),
+  ])
+  const found = await ask('latest lunetrain work', null, { limit: 2 })
+  expect(found.terms).toEqual(['lunetrain', 'work'])
+  expect(found.hits.map(h => h.session)).toEqual(['loader', 'loop'])
+})
 
 test('a keyword search finds the session that holds the words', async () => {
   store.addEntries([entry('Fixed ModuleNotFoundError by reinstalling pillow', { session: 'hit' }), entry('Renamed a variable', { session: 'miss' })])

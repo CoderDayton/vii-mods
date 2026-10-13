@@ -56,6 +56,32 @@ export const listTranscripts = async (root: string): Promise<TranscriptFile[]> =
 
 export const sessionOf = (path: string): string => basename(path, '.jsonl')
 
+const sizeOf = async (path: string): Promise<TranscriptFile | null> => {
+  try {
+    const found = await stat(path)
+    return found.isFile() ? { path, size: found.size } : null
+  } catch (error) {
+    if (!isMissing(error)) throw error
+    return null
+  }
+}
+
+// The transcripts of one session: its own file first, then those of the sub-agents it started.
+export const sessionTranscripts = async (root: string, session: string): Promise<TranscriptFile[]> => {
+  const files: TranscriptFile[] = []
+  try {
+    for (const project of await readdir(root, { withFileTypes: true })) {
+      if (!project.isDirectory()) continue
+      const dir = join(root, project.name)
+      const own = await sizeOf(join(dir, `${session}.jsonl`))
+      if (own !== null) files.push(own, ...(await transcriptsIn(join(dir, session, SUBAGENTS))))
+    }
+  } catch (error) {
+    if (!isMissing(error)) throw error
+  }
+  return files
+}
+
 export type LineBatch = { lines: string[]; end: number }
 
 // `end` is the byte offset just after the last line of a batch, safe to store as the point to resume from. A

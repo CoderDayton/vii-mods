@@ -1,3 +1,4 @@
+import { chunksOf } from '../text/chunk'
 import { redact } from '../text/redact'
 import { isCommandRow, stripInjected } from './strip'
 
@@ -14,14 +15,23 @@ export type Entry = {
   // For a sub-agent's entry, the session that started the agent.
   parent?: string
   project: string
+  // Names the entry across transcripts: a resumed session copies rows into a new file, and the index keeps
+  // one entry per key. Absent for a row with no id.
+  key?: string
 }
 
 export const MAX_ENTRY_CHARS = 4000
+// A text longer than one entry is stored as up to this many, so its end is searchable too.
+const MAX_PARTS = 4
 
 type Block = { type?: unknown; text?: unknown; thinking?: unknown; name?: unknown; input?: unknown; content?: unknown; is_error?: unknown }
 
 export type Row = {
   type?: unknown
+  uuid?: unknown
+  aiTitle?: unknown
+  customTitle?: unknown
+  toolUseResult?: unknown
   sessionId?: unknown
   cwd?: unknown
   timestamp?: unknown
@@ -72,6 +82,23 @@ const peerMessage = (row: Row): string | null => {
   return PEER_MESSAGE.exec(content)?.[1] ?? null
 }
 
+export type SessionTitle = { session: string; title: string; isCustom: boolean }
+
+// The name a row gives its session: one Claude Code wrote, or one the user typed, which counts for more.
+export const titleOf = (row: Row | null): SessionTitle | null => {
+  if (row === null || (row.type !== 'ai-title' && row.type !== 'custom-title')) return null
+  const isCustom = row.type === 'custom-title'
+  const title = redact(asString(isCustom ? row.customTitle : row.aiTitle).trim())
+  const session = asString(row.sessionId)
+  return title === '' || session === '' ? null : { session, title, isCustom }
+}
+
+const answersOf = (row: Row): string[] => {
+  const answers = (row.toolUseResult as { answers?: unknown } | null | undefined)?.answers
+  if (typeof answers !== 'object' || answers === null) return []
+  return Object.entries(answers).map(([question, answer]) => `Asked: ${question}\nChose: ${typeof answer === 'string' ? answer : JSON.stringify(answer)}`)
+}
+
 // One transcript line as an object, or null when it is not one.
 export const rowOf = (line: string): Row | null => {
   try {
@@ -96,9 +123,13 @@ export const entriesOfRow = (row: Row | null): Entry[] => {
   const ts = Date.parse(asString(row.timestamp))
   const base = { ...owner, project: asString(row.cwd), ts: Number.isNaN(ts) ? 0 : ts }
   const out: Entry[] = []
+  const uuid = asString(row.uuid)
   const push = (kind: EntryKind, raw: string): void => {
-    const text = redact(raw.trim()).slice(0, MAX_ENTRY_CHARS)
-    if (text !== '') out.push({ kind, text, ...base })
+    const whole = redact(raw.trim())
+    const parts = whole.length <= MAX_ENTRY_CHARS ? [whole] : chunksOf(whole, { maxChars: MAX_ENTRY_CHARS, maxChunks: MAX_PARTS })
+    for (const text of parts) {
+      if (text !== '') out.push(uuid === '' ? { kind, text, ...base } : { kind, text, ...base, key: `${uuid}:${out.length}` })
+    }
   }
   const prose = (kind: EntryKind, raw: string): void => {
     if (!isCommandRow(raw)) push(kind, stripInjected(raw))
@@ -118,5 +149,6 @@ export const entriesOfRow = (row: Row | null): Entry[] => {
     else if (block.type === 'tool_use' && block.name === 'Bash') push('cmd', asString((block.input as { command?: unknown } | null)?.command))
     else if (block.type === 'tool_result' && block.is_error === true) push('error', resultText(block.content))
   }
+  if (row.type === 'user') for (const answer of answersOf(row)) push('user', answer)
   return out
 }

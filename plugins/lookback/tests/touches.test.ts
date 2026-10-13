@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { rowOf } from '../src/core/transcript/entries'
-import { editsOfRow, fileToolsOf, touchesOf } from '../src/core/transcript/touches'
+import { editsOfRow, fileCallOf, fileToolsOf, touchesOf } from '../src/core/transcript/touches'
 
 const call = (name: string, input: Record<string, unknown>, extra: Record<string, unknown> = {}): string =>
   JSON.stringify({
@@ -21,6 +21,15 @@ test('a run with no person at the prompt leaves no files and no edits', () => {
   const line = call('Edit', { file_path: '/work/app/a.ts', old_string: 'x', new_string: 'y' }, { entrypoint: 'sdk-cli' })
   expect(touchesOf(line, none)).toEqual([])
   expect(editsOfRow(rowOf(line), none)).toEqual([])
+})
+
+test('a live tool call is read for the files it names and whether it changes them', () => {
+  const isFileTool = fileToolsOf('mcp__semantic-cache-mcp')
+  expect(fileCallOf('Edit', { file_path: '/w/a.ts', old_string: 'x', new_string: 'y' }, isFileTool)).toEqual({ action: 'edit', paths: ['/w/a.ts'] })
+  expect(fileCallOf('mcp__semantic-cache-mcp__read', { path: '/w/b.ts' }, isFileTool)).toEqual({ action: 'read', paths: ['/w/b.ts'] })
+  expect(fileCallOf('mcp__semantic-cache-mcp__batch_edit', { path: '/w/c.ts', edits: '[]' }, isFileTool)).toEqual({ action: 'edit', paths: ['/w/c.ts'] })
+  expect(fileCallOf('mcp__other__edit', { path: '/w/d.ts' }, isFileTool)).toBeNull()
+  expect(fileCallOf('WebFetch', { url: 'https://x' }, isFileTool)).toBeNull()
 })
 
 test('the built-in file tools are recorded with no setting, as a read or an edit', () => {
@@ -95,4 +104,10 @@ test('a call with no path, a path over two lines, and rows that are not tool cal
 test('several paths passed as the text of a JSON list are each recorded', () => {
   expect(touchesOf(call('mcp__semantic-cache-mcp__batch_read', { paths: '["/a.ts", "/b.ts", "/a.ts"]' }), cache).map(t => t.path)).toEqual(['/a.ts', '/b.ts'])
   expect(touchesOf(call('mcp__semantic-cache-mcp__batch_read', { paths: '[not json, /b.ts' }), cache).map(t => t.path)).toEqual(['[not json', '/b.ts'])
+})
+
+test('each edit of a row that has an id carries a key, apart from the keys of its other entries', () => {
+  const line = call('Edit', { file_path: '/work/app/a.ts', old_string: 'x', new_string: 'y' }, { uuid: 'u7' })
+  expect(editsOfRow(rowOf(line), none).map(e => e.key)).toEqual(['u7:e0'])
+  expect(editsOfRow(rowOf(call('Edit', { file_path: '/work/app/a.ts', old_string: 'x', new_string: 'y' })), none)[0]?.key).toBeUndefined()
 })

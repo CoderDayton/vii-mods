@@ -1,5 +1,5 @@
 import type { FileUse } from '../types'
-import { fitBlocks, headOf, snippetOf } from './format'
+import { SHORT_ID, dateOf, fitBlocks, headOf, snippetOf } from './format'
 
 // What one session did to a file, with what the user had asked for before it.
 export type Blame = FileUse & { asked: string | null }
@@ -25,6 +25,19 @@ export const formatBlame = (rows: readonly Blame[], asked: string, options: { ma
   const kept = fitBlocks(blocks, options.maxChars)
   const left = blocks.length - kept.length
   return left === 0 ? kept.join('\n\n') : `${kept.join('\n\n')}\n\n… ${plural(left, 'more file')}; give more of the path`
+}
+
+const NOTE_ASKED_WIDTH = 90
+
+// A few lines on what earlier sessions did to one file, for the moment a session first touches it. Empty
+// when fewer than `min` sessions changed it.
+export const formatFileNote = (rows: readonly Blame[], options: { min: number; shown: number }): string => {
+  if (rows.length === 0 || rows.length < options.min) return ''
+  const lines = rows.slice(0, options.shown).map(b => {
+    const asked = b.asked === null ? '' : snippetOf(b.asked, [], NOTE_ASKED_WIDTH)
+    return `  ${dateOf(b.first)}  ${b.session.slice(0, SHORT_ID)}${asked === '' ? '' : `  ${asked}`}`
+  })
+  return [`Changed in ${plural(rows.length, 'earlier session')}; the latest:`, ...lines].join('\n')
 }
 
 // The files a session touched, one per line under the session's own line.

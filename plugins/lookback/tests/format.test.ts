@@ -39,6 +39,11 @@ test('a hit shows its date, project folder, short id, kind and snippet', () => {
   expect(text).toContain('The doubled brackets are fixed.')
 })
 
+test('a hit from the session asking says so on its first line, before its title', () => {
+  const [head] = formatHits([hit({ own: true, title: 'Button labels' })], [], { maxChars: 2000 }).split('\n')
+  expect(head).toBe('2026-10-09  claude-mods  d18dbf28  this session, earlier  Button labels')
+})
+
 const ASKED = 'The buttons show double brackets.'
 const ENDED = 'The labels held brackets of their own; fixed.'
 
@@ -102,4 +107,9 @@ test('a page cut for size goes on from the last session shown', () => {
 
 test('a page past the last session says there is nothing further', () => {
   expect(formatHits([], [], { maxChars: 2000, offset: 5, more: 0 })).toBe('No more sessions match.')
+})
+
+test('a session with a title shows it at the end of its first line', () => {
+  const [head] = formatHits([hit({ title: 'Fix the doubled brackets' })], [], { maxChars: 4000 }).split('\n')
+  expect(head).toBe('2026-10-09  claude-mods  d18dbf28  Fix the doubled brackets')
 })

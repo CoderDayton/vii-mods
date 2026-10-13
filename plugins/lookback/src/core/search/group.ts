@@ -26,6 +26,9 @@ export type SessionHit = {
   entries: HitEntry[]
   // The files the session changed, the most changed first.
   files?: string[]
+  title?: string
+  // Set for the session that asked: these are its own earlier turns.
+  own?: true
 }
 
 export type GroupOptions = {
@@ -50,10 +53,12 @@ const recency = (ts: number, now: number, halfLifeDays: number): number => {
 const sameText = (text: string): string => text.replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 200)
 
 // Whether the question holds a whole word of the project's folder name: "garden" names glowseed-garden.
-const names = (terms: readonly string[], project: string): boolean => {
+export const names = (terms: readonly string[], project: string): boolean => {
   const words = (project.split('/').filter(Boolean).pop() ?? '').toLowerCase().split(/[^a-z0-9]+/)
   return terms.some(t => words.includes(t.toLowerCase()))
 }
+
+export const newestFirst = (hits: readonly SessionHit[]): SessionHit[] => [...hits].sort((a, b) => b.ts - a.ts)
 
 const isCode = (entry: HitEntry): boolean => CODE_KINDS.includes(entry.kind)
 

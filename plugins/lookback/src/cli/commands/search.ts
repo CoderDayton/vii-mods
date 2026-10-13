@@ -4,9 +4,9 @@ import { formatHits } from '../../core/search/format'
 import type { Config } from '../../runtime/config'
 import { searchPast } from '../../runtime/search'
 import { integer, kindsOf, sinceOf, textOf } from '../args'
-import { EXIT } from '../io'
+import { EXIT, UsageError } from '../io'
 import type { ExitCode, Io } from '../io'
-import { embedderFor, openForReading } from '../open'
+import { embedderFor, openForReading, refreshFor } from '../open'
 
 const MAX_LIMIT = 50
 const MAX_OFFSET = 500
@@ -21,7 +21,9 @@ const OPTIONS = {
   kind: { type: 'string', multiple: true },
   since: { type: 'string' },
   exclude: { type: 'string' },
+  own: { type: 'string' },
   keyword: { type: 'boolean' },
+  best: { type: 'boolean' },
   json: { type: 'boolean' },
 } as const
 
@@ -32,13 +34,25 @@ export const search = async (argv: string[], io: Io, config: Config): Promise<Ex
   const offset = integer('offset', values.offset, 0, MAX_OFFSET, 0)
   const kinds = kindsOf(values.kind)
   const since = sinceOf(values.since, io.now())
+  const own = values.own ?? ''
+  if (own !== '' && values.exclude !== undefined) throw new UsageError('--own and --exclude cannot go together')
+
+  // A refresh opens the index for writing, which would make one where there is none.
+  if (own !== '') {
+    const before = openForReading(config, io)
+    if ('code' in before) return before.code
+    before.store.close()
+    await refreshFor(config, own)
+  }
 
   const opened = openForReading(config, io)
   if ('code' in opened) return opened.code
   const { store } = opened
   try {
     const embedder = values.keyword === true ? null : embedderFor(config, { timeoutMs: QUERY_EMBED_TIMEOUT_MS })
-    const result = await searchPast(store, embedder, query, {
+    // The turn the search is asked in starts at the session's last prompt; the asker still sees it.
+    const sessionBefore = own === '' ? undefined : { session: own, ts: store.lastSaid(own, 'user', io.now())?.ts ?? 0 }
+    const found = await searchPast(store, embedder, query, {
       now: io.now(),
       limit,
       offset,
@@ -46,8 +60,11 @@ export const search = async (argv: string[], io: Io, config: Config): Promise<Ex
       kinds,
       since,
       excludeSession: values.exclude,
+      sessionBefore,
       keywordOnly: values.keyword === true,
+      order: values.best === true ? 'best' : 'newest',
     })
+    const result = { ...found, hits: found.hits.map(hit => (hit.session === own ? { ...hit, own: true as const } : hit)) }
     if (result.semantic === 'unavailable') io.stderr('lookback: the embedding server did not answer; matched on words only\n')
     io.stdout(
       values.json === true

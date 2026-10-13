@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { entriesOf } from '../src/core/transcript/entries'
+import { MAX_ENTRY_CHARS, entriesOf, titleOf } from '../src/core/transcript/entries'
 
 const row = (fields: Record<string, unknown>): string =>
   JSON.stringify({ sessionId: 's1', cwd: '/work/app', timestamp: '2026-10-09T10:00:00.000Z', ...fields })
@@ -85,7 +85,39 @@ test('other row types, bad JSON and rows with no session are skipped', () => {
   expect(entriesOf(JSON.stringify({ type: 'user', message: { content: 'no session' } }))).toEqual([])
 })
 
-test('a long text is cut at the entry limit', () => {
-  const [entry] = entriesOf(user('x'.repeat(10_000)))
-  expect(entry?.text.length).toBe(4000)
+test('a long text becomes several entries, so its end can be found too', () => {
+  const paragraphs = Array.from({ length: 30 }, (_, i) => `Paragraph ${i} ${'word '.repeat(60)}`)
+  const entries = entriesOf(user(`${paragraphs.join('\n\n')}\n\nThe last line names zebra.`))
+  expect(entries.length).toBe(3)
+  expect(entries.every(e => e.kind === 'user' && e.text.length <= MAX_ENTRY_CHARS)).toBe(true)
+  expect(entries[0]?.text.startsWith('Paragraph 0')).toBe(true)
+  expect(entries.at(-1)?.text.endsWith('The last line names zebra.')).toBe(true)
+})
+
+test('a text with no break in it is still held to the entry limit, and a huge one to four entries', () => {
+  const entries = entriesOf(user('x'.repeat(40_000)))
+  expect(entries.map(e => e.text.length)).toEqual([4000, 4000, 4000, 4000])
+})
+
+test('an answer the user picked from a question is a user entry with the question', () => {
+  const line = user([{ type: 'tool_result', tool_use_id: 't1', content: 'Your questions have been answered.' }], {
+    toolUseResult: { questions: [], answers: { 'Which store should the mod read?': 'Claude Code only', 'Keep the cache?': 'No' } },
+  })
+  expect(entriesOf(line).map(e => [e.kind, e.text])).toEqual([
+    ['user', 'Asked: Which store should the mod read?\nChose: Claude Code only'],
+    ['user', 'Asked: Keep the cache?\nChose: No'],
+  ])
+})
+
+test('each entry of a row that has an id carries a key made from it, so a copied row is stored once', () => {
+  const line = row({ type: 'assistant', uuid: 'u1', message: { content: [{ type: 'text', text: 'One.' }, { type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] } })
+  expect(entriesOf(line).map(e => e.key)).toEqual(['u1:0', 'u1:1'])
+  expect(entriesOf(user('No id here.'))[0]?.key).toBeUndefined()
+})
+
+test('a title row names its session, and a title the user gave is marked', () => {
+  expect(titleOf({ type: 'ai-title', aiTitle: ' Fix the build ', sessionId: 's1' })).toEqual({ session: 's1', title: 'Fix the build', isCustom: false })
+  expect(titleOf({ type: 'custom-title', customTitle: 'My name for it', sessionId: 's1' })).toEqual({ session: 's1', title: 'My name for it', isCustom: true })
+  expect(titleOf({ type: 'ai-title', aiTitle: '', sessionId: 's1' })).toBeNull()
+  expect(titleOf({ type: 'user', sessionId: 's1' })).toBeNull()
 })

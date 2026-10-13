@@ -6,22 +6,44 @@ Commands:
   lookback index [--no-embed] [--quiet]
       Read new transcript lines into the index, then embed them.
   lookback search <question...> [options]
-      Find past sessions. Options:
+      Find past sessions, listed newest first. Words about time in the
+      question are read, not searched for: "yesterday", "last week",
+      "3 days ago", "since friday", "sept 21", "at 3pm" set the span, and
+      "latest" or "most recent" asks for the newest matches. A question
+      about time alone lists the sessions of that time. Two times in one
+      question cover both; "between X and Y" is a range. Options:
         --limit <n>        sessions to return (default 5)
         --offset <n>       pass over the best n sessions, to read the next page
         --project <text>   only sessions whose folder contains the text
         --kind <kind>      user, assistant, thinking, error, cmd or edit; repeatable
         --since <span>     only the last span, such as 12h, 30d or 2w
         --exclude <id>     leave one session out, usually the current one
+        --own <id>         the session asking: read its new turns first, and
+                           search it up to the turn in progress
         --keyword          match on words only; do not call the embedding server
+        --best             list the best match first, not the newest
         --json             print the result as JSON
   lookback show <session id> [--offset <n>] [--limit <n>] [--kind <kind>] [--json]
       Read one session in order. The start of an id is enough.
+  lookback recent [--project <folder>] [--exact] [--titled] [--limit <n>] [--exclude <id>] [--json]
+      The latest sessions, newest first, each with its title and how it ended.
+      --project takes a full folder path and covers the folders under it;
+      --exact covers that folder only. --titled leaves out sessions with no
+      title, which are mostly ones another session drove.
+  lookback recall <prompt...> [--project <folder>] [--exclude <id>] [--skip <ids>]
+      What past sessions of one folder already said about a prompt, or nothing.
+      Only an entry that means nearly the same and shares two telling words
+      counts. --skip takes session ids by commas, ones already shown.
+  lookback recall --asked --session <id> <prompt...>
+      What past turns say about a prompt that asks about earlier work. Reads
+      the new turns of that session first, and searches them too, up to its
+      last exchange. The words of that exchange name the topic, and an entry
+      must hold three topic words to be printed.
   lookback fix <error text...> [--limit <n>] [--project <text>] [--since <span>] [--exclude <id>] [--json]
       Past sessions that hit the same error, with what each ran or changed and how that turn ended.
   lookback how <words...> [--limit <n>] [--project <text>] [--since <span>] [--json]
       The shell commands that hold every word, the most run first.
-  lookback blame <file path> [--reads] [--limit <n>] [--json]
+  lookback blame [--brief [--min <n>] [--exclude <id>]] [--project <folder>] <file path> [--reads] [--limit <n>] [--json]
       The sessions that changed a file, with what was asked before. The end
       of a path is enough. --reads adds sessions that only read it.
   lookback files <session id> [--limit <n>] [--json]

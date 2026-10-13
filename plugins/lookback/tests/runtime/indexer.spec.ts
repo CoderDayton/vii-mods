@@ -68,6 +68,17 @@ test('a transcript that was rewritten shorter is read again from the start', asy
   expect((store.stats()).entries).toBe(1)
 })
 
+test('a file with entries on record but no read position is read again in place of them, not on top', async () => {
+  const path = projects.write('proj', 's1', [userRow('first question about the parser', { session: 's1' })])
+  await run(null)
+  store.ingest('/gone/s0.jsonl', [{ kind: 'user', text: 'from a deleted transcript', ts: 1, session: 's0', project: '/work/app' }], { size: 5, offset: 5 })
+  store.forgetReadPositions()
+  expect(store.fileState(path)).toBeNull()
+  await run(null)
+  expect(store.stats().entries).toBe(2)
+  expect(store.sessions('s0')).toHaveLength(1)
+})
+
 test('prose and shell commands both get vectors', async () => {
   projects.write('proj', 's1', [
     userRow('How do I fix the build error in the parser?', { session: 's1' }),

@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite'
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -32,6 +33,12 @@ beforeEach(() => {
 afterEach(() => {
   store.close()
   rmSync(dir, { recursive: true, force: true })
+})
+
+test('a word held by more than the common share is counted only until it is past that share', () => {
+  store.addEntries([...Array.from({ length: 20 }, (_, i) => entry(`common filler ${i}`)), entry('rare gasket'), entry('rare gasket again')])
+  expect(store.termCounts(['common', 'gasket', 'absent'], 'user')).toEqual({ total: 22, counts: [20, 2, 0] })
+  expect(store.termCounts(['common', 'gasket', 'absent'], 'user', 0.2)).toEqual({ total: 22, counts: [5, 2, 0] })
 })
 
 test('entries come back by id, in the order asked', () => {
@@ -131,6 +138,36 @@ test('filters narrow a search by project, kind, age and session', () => {
   expect(sessions({ kinds: ['assistant'] })).toEqual(['b'])
   expect(sessions({ since: 1_500 })).toEqual(['a', 'c'])
   expect(sessions({ excludeSession: 'a' })).toEqual(['b', 'c'])
+})
+
+test('a filter can stop at a time, and can let a session in only up to a time', () => {
+  store.addEntries([
+    entry('deploy notes', { session: 'a', ts: 1_000 }),
+    entry('deploy notes', { session: 'a', ts: 3_000 }),
+    entry('deploy notes', { session: 'kid', parent: 'a', ts: 3_500 }),
+    entry('deploy notes', { session: 'b', ts: 4_000 }),
+  ])
+  const found = (filter: Filter): string[] =>
+    store
+      .entries(store.lexical(['deploy'], 10, filter).map(h => h.id))
+      .map(e => `${e.session}@${e.ts}`)
+      .sort()
+  expect(found({ until: 3_000 })).toEqual(['a@1000'])
+  expect(found({ sessionBefore: { session: 'a', ts: 2_000 } })).toEqual(['a@1000', 'b@4000'])
+})
+
+test('the last thing said in a session before a time is found by kind, passing over one text', () => {
+  store.addEntries([
+    entry('first prompt', { ts: 1_000 }),
+    entry('first answer', { ts: 2_000, kind: 'assistant' }),
+    entry('second prompt', { ts: 3_000 }),
+    entry('late answer', { ts: 9_000, kind: 'assistant' }),
+    entry('another session', { ts: 3_500, session: 's2' }),
+  ])
+  expect(store.lastSaid('s1', 'user', 5_000)).toEqual({ text: 'second prompt', ts: 3_000 })
+  expect(store.lastSaid('s1', 'user', 5_000, ' second prompt\n')?.text).toBe('first prompt')
+  expect(store.lastSaid('s1', 'assistant', 5_000)?.text).toBe('first answer')
+  expect(store.lastSaid('s1', 'assistant', 1_500)).toBeNull()
 })
 
 test('a project filter that holds a wildcard character is taken literally', () => {
@@ -304,6 +341,80 @@ test('a reader sees what the writer has stored while the writer is still open', 
   } finally {
     reader.close()
   }
+})
+
+test('an entry whose key is already stored is left out, as a resumed session copies rows into a new file', () => {
+  const first = store.ingest('/t/a.jsonl', [entry('one', { key: 'u1:0' }), entry('two', { key: 'u2:0' })], { size: 10, offset: 10 })
+  const again = store.ingest('/t/b.jsonl', [entry('one', { key: 'u1:0', session: 's2' }), entry('three', { key: 'u3:0', session: 's2' })], { size: 10, offset: 10 })
+  expect(first).toHaveLength(2)
+  expect(again).toHaveLength(1)
+  expect(textsOf(again.map(id => ({ id })))).toEqual(['three'])
+  expect(store.stats().entries).toBe(3)
+  expect(store.ingest('/t/c.jsonl', [entry('no key'), entry('no key')], { size: 1, offset: 1 })).toHaveLength(2)
+})
+
+test('a session keeps its newest title, and one the user typed is never replaced by one that was made up', () => {
+  store.setTitles([{ session: 's1', title: 'First guess', isCustom: false }])
+  store.setTitles([{ session: 's1', title: 'Second guess', isCustom: false }])
+  expect(store.titles(['s1', 'none'])).toEqual(new Map([['s1', 'Second guess']]))
+  store.setTitles([{ session: 's1', title: 'My own name', isCustom: true }])
+  store.setTitles([{ session: 's1', title: 'Third guess', isCustom: false }])
+  expect(store.titles(['s1']).get('s1')).toBe('My own name')
+})
+
+test('the latest sessions of a project come newest first, each with its title or its first prompt', () => {
+  const day = (n: number) => Date.parse(`2026-10-0${n}T00:00:00Z`)
+  store.addEntries([
+    entry('fix the login page', { session: 'old', ts: day(1) }),
+    entry('Done.', { session: 'old', ts: day(2), kind: 'assistant' }),
+    entry('add dark mode', { session: 'new', ts: day(3), project: '/work/app/web' }),
+    entry('inside a sub-agent', { session: 'agent', parent: 'new', ts: day(4) }),
+    entry('another project', { session: 'far', ts: day(5), project: '/work/application' }),
+  ])
+  store.setTitles([{ session: 'old', title: 'Login page fix', isCustom: false }])
+  expect(store.recent('/work/app', 5)).toEqual([
+    { session: 'new', project: '/work/app/web', last: day(3), title: null, asked: 'add dark mode', ended: null },
+    { session: 'old', project: '/work/app', last: day(2), title: 'Login page fix', asked: 'fix the login page', ended: 'Done.' },
+  ])
+  expect(store.recent('/work/app', 5, '', false, true).map(s => s.session)).toEqual(['old'])
+  expect(store.recent('/work/app', 5, 'new').map(s => s.session)).toEqual(['old'])
+  expect(store.recent('/work/app', 1).map(s => s.session)).toEqual(['new'])
+  expect(store.recent('', 9).map(s => s.session)).toEqual(['far', 'new', 'old'])
+  expect(store.recent('', 9, '', true).map(s => s.session)).toEqual(['old'])
+})
+
+test('forgetting a session forgets its title', () => {
+  store.addEntries([entry('secret work', { session: 's9' })])
+  store.setTitles([{ session: 's9', title: 'Secret work', isCustom: false }])
+  store.forget('s9', 1)
+  expect(store.titles(['s9']).size).toBe(0)
+})
+
+test('an index of the version before is brought up in place: its entries stay, and every file is read again', () => {
+  store.ingest('/t/gone.jsonl', [entry('kept from a transcript that was deleted')], { size: 10, offset: 10 })
+  store.fileTools = 'mcp__files'
+  store.close()
+  const old = new Database(path)
+  old.exec("drop index entries_key; alter table entries drop column key; drop table titles; update meta set value = '8' where key = 'schema'")
+  old.close()
+
+  store = Store.open(path)
+  expect(store.stats().entries).toBe(1)
+  expect(store.fileState('/t/gone.jsonl')).toBeNull()
+  expect(store.fileTools).toBe('mcp__files')
+  expect(store.ingest('/t/new.jsonl', [entry('a', { key: 'u1:0' }), entry('a', { key: 'u1:0' })], { size: 1, offset: 1 })).toHaveLength(1)
+  store.setTitles([{ session: 's1', title: 'Named', isCustom: false }])
+  expect(store.titles(['s1']).get('s1')).toBe('Named')
+})
+
+test('an index of a version with no path to this one is emptied', () => {
+  store.addEntries([entry('old shape')])
+  store.close()
+  const old = new Database(path)
+  old.exec("update meta set value = '3' where key = 'schema'")
+  old.close()
+  store = Store.open(path)
+  expect(store.stats().entries).toBe(0)
 })
 
 test('a second writer is refused while the first is open', () => {

@@ -13,12 +13,19 @@ export type Filter = {
   since?: number
   // A session whose entries never match, usually the one asking.
   excludeSession?: string
+  // Epoch milliseconds: entries before this time.
+  until?: number
+  // A session whose entries, and those of its sub-agents, match only when they are older than `ts`.
+  sessionBefore?: { session: string; ts: number }
 }
 
 export type Ranked = { id: number; score: number }
 
 // One session as the index holds it: when it ran and how many entries it has.
 export type SessionSummary = { session: string; parent?: string; project: string; first: number; last: number; entries: number }
+
+// A session a person ran: its title when it has one, the first thing they asked, and the last thing Claude said.
+export type RecentSession = { session: string; project: string; last: number; title: string | null; asked: string | null; ended: string | null }
 
 // A shell command and how often it ran; `last` and `project` are those of its latest run.
 export type CommandUse = { text: string; runs: number; last: number; project: string }

@@ -64,6 +64,24 @@ test('blame lists the sessions that changed a file, with what was asked before t
   expect(out.trimEnd().split('\n')).toEqual(['/work/app/src/store.ts', '  2026-10-01  app  aaaa1111  2 edits, 1 read', '    asked   Make the store reject a second writer'])
 })
 
+test('an edit that a resumed session copied from the session before it counts once', async () => {
+  const R = 'cccc3333-0000-0000-0000-000000000003'
+  await index()
+  projects.write('proj', R, [
+    toolRow(EDIT, { path: '/work/app/src/store.ts', old_string: 'a', new_string: 'b' }, { session: R, ts: at(2) }),
+    toolRow(EDIT, { path: '/work/app/src/store.ts', old_string: 'b', new_string: 'c' }, { session: R, ts: at(3) }),
+    userRow('Carry on with the tests', { session: R, ts: at(30) }),
+    toolRow('Write', { file_path: '/work/app/tests/more.spec.ts', content: '' }, { session: R, ts: at(31) }),
+  ])
+  await index()
+  const { out } = await run(['blame', 'src/store.ts'])
+  expect(out).toContain('aaaa1111  2 edits, 1 read')
+  expect(out).not.toContain('cccc3333')
+  const files = (await run(['files', 'cccc3'])).out
+  expect(files).toContain('more.spec.ts')
+  expect(files).not.toContain('src/store.ts')
+})
+
 test('blame matches whole path parts from the end, and can include sessions that only read', async () => {
   await index()
   expect((await run(['blame', 'store.ts'])).out).not.toContain('restore.ts')

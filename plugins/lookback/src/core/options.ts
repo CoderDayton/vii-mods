@@ -5,6 +5,8 @@ export type Options = {
   autoRecall: boolean
   autoIndex: boolean
   errorHints: boolean
+  sessionDigest: boolean
+  fileNotes: boolean
   fileTools: string
   embeddingModel: string
   embeddingUrl: string
@@ -15,6 +17,8 @@ export const DEFAULTS: Options = {
   autoRecall: true,
   autoIndex: true,
   errorHints: true,
+  sessionDigest: true,
+  fileNotes: true,
   fileTools: '',
   embeddingModel: 'nomic-embed-text',
   embeddingUrl: 'http://localhost:11434/v1',
@@ -31,6 +35,8 @@ export const readOptions = (raw: PluginOptions): Options => ({
   autoRecall: flag(raw.autoRecall, DEFAULTS.autoRecall),
   autoIndex: flag(raw.autoIndex, DEFAULTS.autoIndex),
   errorHints: flag(raw.errorHints, DEFAULTS.errorHints),
+  sessionDigest: flag(raw.sessionDigest, DEFAULTS.sessionDigest),
+  fileNotes: flag(raw.fileNotes, DEFAULTS.fileNotes),
   fileTools: text(raw.fileTools, DEFAULTS.fileTools),
   embeddingModel: text(raw.embeddingModel, DEFAULTS.embeddingModel),
   embeddingUrl: text(raw.embeddingUrl, DEFAULTS.embeddingUrl),

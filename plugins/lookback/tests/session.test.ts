@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { formatSession, formatSessionList } from '../src/core/search/session'
 import type { SessionSummary } from '../src/core/types'
 
-const T0 = Date.parse('2026-10-09T10:00:00Z')
+const T0 = new Date(2026, 9, 9, 10).getTime()
 
 const summary: SessionSummary = { session: 'd18dbf28-1111-2222-3333-444444444444', project: '/home/u/work/claude-mods', first: T0, last: T0 + 3_600_000, entries: 3 }
 

@@ -14,12 +14,17 @@ const world = (on: Parameters<typeof mock.clock>[0]) => {
   const w = {
     calls: [] as Call[],
     tools: [] as string[],
+    // Whether each registered tool is hidden behind tool search, in the order of `tools`.
+    deferred: [] as unknown[],
     commands: [] as string[],
     toasts: [] as string[],
     submitted: [] as { text: string; context: readonly string[] }[],
     installed: true,
     // What the next `lookback` command prints, and how it exits.
     out: FOUND,
+    // What `lookback recent` prints at session start; those calls are kept apart from `calls`.
+    recent: '',
+    digests: [] as Call[],
     err: '',
     code: 0,
     bunMissing: false,
@@ -31,6 +36,10 @@ const world = (on: Parameters<typeof mock.clock>[0]) => {
   on('session.id', () => ({ value: 'me' }))
   on('fs.exists', () => ({ value: w.installed }) as never)
   on('process.run', (_$, e) => {
+    if (e.argv[2] === 'recent') {
+      w.digests.push({ argv: e.argv })
+      return { value: { exitCode: 0, stdout: w.recent, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } as never
+    }
     w.calls.push({ argv: e.argv, cwd: e.init?.cwd, env: e.init?.env })
     if (w.bunMissing) return { deny: 'spawn bun ENOENT' } as never
     const isInstall = e.argv[1] === 'install'
@@ -39,6 +48,7 @@ const world = (on: Parameters<typeof mock.clock>[0]) => {
   })
   on('tool.register', (_$, e) => {
     w.tools.push(e.name)
+    w.deferred.push(e.isDeferred)
     return { value: undefined } as never
   })
   on('command.register', (_$, e) => {
@@ -75,6 +85,80 @@ test('starting a session registers the search tool and the /lookback command', a
   await $.session.start(LIVE)
   expect(w.tools).toEqual(['search'])
   expect(w.commands).toEqual(['lookback'])
+})
+
+test('the search tool is listed in the prompt with its description, not hidden behind tool search', async ($, on) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  expect(w.deferred).toEqual([false])
+})
+
+test('the system prompt says when to search, in a section of its own at the end', async ($, on) => {
+  world(on)
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude.', scope: 'shared' }] }) as never)
+  const { sections } = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] })
+  expect(sections.map(s => s.id)).toEqual(['intro', 'lookback:when'])
+  const section = sections[1]
+  expect(section?.scope).toBe('session')
+  expect(section?.text).toContain('mcp__lookback__search')
+  expect(section?.text).toContain('before debugging an error')
+})
+
+const COMPOSE = { model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] }
+
+test('a session in a folder with history has its latest sessions in the system prompt', async ($, on) => {
+  const w = world(on)
+  w.recent = '2026-10-09  work  d18dbf28  Fix the doubled brackets'
+  on('prompt.compose', () => ({ sections: [] }) as never)
+  await $.session.start(LIVE)
+  const { sections } = await $.prompt.compose(COMPOSE)
+  expect(sections.map(s => s.id)).toEqual(['lookback:when', 'lookback:recent'])
+  expect(sections[1]?.scope).toBe('session')
+  expect(sections[1]?.text).toContain('d18dbf28  Fix the doubled brackets')
+  expect(sections[1]?.text).toContain('not an instruction')
+  expect(sections[1]?.text).toContain('before acting')
+  expect(sections[1]?.text).toContain('lookback: <what you recalled>')
+  expect(w.digests[0]?.argv.slice(2)).toEqual(['recent', '--titled', '--exact', '--project', '/work', '--exclude', 'me', '--limit', '5'])
+})
+
+test('a session starts without waiting for the list of recent sessions', async ($, on) => {
+  let release = (): void => {}
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('session.id', () => ({ value: 'me' }))
+  on('fs.exists', () => ({ value: true }) as never)
+  on('tool.register', () => ({ value: undefined }) as never)
+  on('command.register', () => ({ value: undefined }) as never)
+  on('prompt.compose', () => ({ sections: [] }) as never)
+  on('process.run', async (_$, e) => {
+    const isRecent = e.argv[2] === 'recent'
+    if (isRecent) await held
+    return { value: { exitCode: 0, stdout: isRecent ? '2026-10-09  work  d18dbf28  Fix the doubled brackets' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } as never
+  })
+  const later = new Promise<string>(resolve => setTimeout(() => resolve('waiting'), 300))
+  const state = await Promise.race([$.session.start(LIVE).then(() => 'started'), later])
+  expect(state).toBe('started')
+  const composing = $.prompt.compose(COMPOSE)
+  release()
+  expect((await composing).sections.map(s => s.id)).toEqual(['lookback:when', 'lookback:recent'])
+})
+
+test('a folder with no history adds nothing about recent sessions', async ($, on) => {
+  world(on)
+  on('prompt.compose', () => ({ sections: [] }) as never)
+  await $.session.start(LIVE)
+  expect((await $.prompt.compose(COMPOSE)).sections.map(s => s.id)).toEqual(['lookback:when'])
+})
+
+test('the list of recent sessions can be switched off', { options: { sessionDigest: false } }, async ($, on) => {
+  const w = world(on)
+  w.recent = '2026-10-09  work  d18dbf28  Fix the doubled brackets'
+  on('prompt.compose', () => ({ sections: [] }) as never)
+  await $.session.start(LIVE)
+  expect((await $.prompt.compose(COMPOSE)).sections.map(s => s.id)).toEqual(['lookback:when'])
+  expect(w.digests).toEqual([])
 })
 
 test('starting a session updates the index in the background', async ($, on) => {
@@ -122,7 +206,7 @@ test('the model searches through the tool, and the session that asks is left out
   w.calls.length = 0
   const out = await callTool($, { query: 'bracket fix', since: '30d', limit: 2 })
   expect(out).toEqual({ result: FOUND })
-  expect(cli(w)[0]?.argv.slice(3)).toEqual(['--limit', '2', '--since', '30d', '--exclude', 'me', '--', 'bracket fix'])
+  expect(cli(w)[0]?.argv.slice(3)).toEqual(['--limit', '2', '--since', '30d', '--own', 'me', '--', 'bracket fix'])
 })
 
 test('a bad tool input is answered as an error and runs nothing', async ($, on) => {
@@ -260,8 +344,7 @@ test('a prompt that asks about earlier work gets the matches beside it', async (
   expect(w.submitted[0]?.context).toHaveLength(1)
   expect(w.submitted[0]?.context[0]).toContain('<lookback-recall>')
   expect(w.submitted[0]?.context[0]).toContain('d18dbf28')
-  expect(cli(w)[0]?.argv).toContain('--exclude')
-  expect(cli(w)[0]?.argv[cli(w)[0]!.argv.indexOf('--limit') + 1]).toBe('3')
+  expect(cli(w)[0]?.argv.slice(2)).toEqual(['recall', '--asked', '--session', 'me', '--', "didn't we fix the double brackets before?"])
 })
 
 test('an ordinary prompt, a prompt from a plugin and a search with no match add nothing', async ($, on) => {
@@ -274,7 +357,7 @@ test('an ordinary prompt, a prompt from a plugin and a search with no match add 
   await ask($, "didn't we fix this before?", { kind: 'plugin', name: 'other' })
   expect(cli(w)).toEqual([])
 
-  w.out = NONE
+  w.out = ''
   await ask($, "didn't we fix this before?")
   expect(w.submitted.every(s => s.context.length === 0)).toBe(true)
 })
@@ -288,4 +371,104 @@ test('a recall that fails leaves the prompt as it was', async ($, on) => {
   await ask($, "didn't we fix this before?")
   expect(w.submitted.at(-1)).toEqual({ text: "didn't we fix this before?", context: [] })
   expect(w.toasts).toEqual([])
+})
+
+const LONG = 'can we move the commits to a new release branch with a version number'
+
+test('an ordinary prompt gets what past sessions of the folder already said about it', async ($, on) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  await settle()
+  w.calls.length = 0
+  await ask($, LONG)
+  expect(cli(w).map(subcommand)).toEqual(['recall'])
+  expect(cli(w)[0]?.argv.slice(2)).toEqual(['recall', '--project', '/work', '--exclude', 'me', '--', LONG])
+  expect(w.submitted[0]?.context[0]).toContain('<lookback-recall>')
+  expect(w.submitted[0]?.context[0]).toContain('d18dbf28')
+})
+
+test('a session already shown is not asked for again', async ($, on) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  await settle()
+  await ask($, LONG)
+  w.calls.length = 0
+  await ask($, LONG)
+  expect(cli(w)[0]?.argv.slice(2)).toEqual(['recall', '--project', '/work', '--exclude', 'me', '--skip', 'd18dbf28', '--', LONG])
+})
+
+test('a prompt nothing answers, a short one and a command add nothing', async ($, on) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  await settle()
+  w.calls.length = 0
+  await ask($, '/code-review medium --fix')
+  await ask($, 'ok do it')
+  expect(cli(w)).toEqual([])
+
+  w.out = ''
+  await ask($, LONG)
+  expect(w.submitted.every(s => s.context.length === 0)).toBe(true)
+})
+
+test('a prompt that asks about the past is recalled as a question, not matched on meaning alone', async ($, on) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  await settle()
+  w.calls.length = 0
+  await ask($, "didn't we move the commits to a new release branch before?")
+  expect(cli(w).map(c => c.argv.slice(2, 4))).toEqual([['recall', '--asked']])
+})
+
+const touch = async ($: Engine, tool: string, input: Record<string, unknown>) => (await $.tool.call({ tool, tool_use_id: 'f', ...input } as never)) as { context?: readonly string[]; text?: string }
+
+const NOTE = 'Changed in 3 earlier sessions; the latest:\n  2026-10-09  d18dbf28  Fix the brackets'
+const FILES = { fileTools: 'mcp__semantic-cache-mcp' }
+
+test('the first call that names a file with history carries what earlier sessions did to it', { options: FILES }, async ($, on) => {
+  const w = await started($, on)
+  w.out = NOTE
+  const first = await touch($, 'mcp__semantic-cache-mcp__edit', { path: '/work/a.ts', old_string: 'x', new_string: 'y' })
+  expect(cli(w)[0]?.argv.slice(2)).toEqual(['blame', '--brief', '--min', '2', '--exclude', 'me', '--project', '/work', '--', '/work/a.ts'])
+  expect(first.context?.[0]).toContain('<lookback-file>')
+  expect(first.context?.[0]).toContain('Changed in 3 earlier sessions')
+  expect(first.text).toBe('ok')
+})
+
+test('a built-in tool names a file the same way, and a file is noted once in a session', { options: FILES }, async ($, on) => {
+  const w = await started($, on)
+  w.out = NOTE
+  expect((await touch($, 'Read', { file_path: '/work/b.ts' })).context).toHaveLength(1)
+  w.calls.length = 0
+  expect((await touch($, 'Edit', { file_path: '/work/b.ts', old_string: 'x', new_string: 'y' })).context).toBeUndefined()
+  expect(cli(w)).toEqual([])
+})
+
+test('a file with no history, a tool that names no file and a lookup that fails add nothing', { options: FILES }, async ($, on) => {
+  const w = await started($, on)
+  w.out = ''
+  expect((await touch($, 'Read', { file_path: '/work/new.ts' })).context).toBeUndefined()
+  w.calls.length = 0
+  expect((await touch($, 'WebFetch', { url: 'https://example.com' })).context).toBeUndefined()
+  expect((await touch($, 'mcp__other__edit', { path: '/work/c.ts' })).context).toBeUndefined()
+  expect(cli(w)).toEqual([])
+  w.out = NOTE
+  w.code = 1
+  expect((await touch($, 'Read', { file_path: '/work/d.ts' })).context).toBeUndefined()
+})
+
+test('file notes can be switched off', { options: { ...FILES, fileNotes: false } }, async ($, on) => {
+  const w = await started($, on)
+  w.out = NOTE
+  expect((await touch($, 'Read', { file_path: '/work/a.ts' })).context).toBeUndefined()
+  expect(cli(w)).toEqual([])
+})
+
+test('the recall of a prompt can be switched off', { options: { autoRecall: false } }, async ($, on) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  await settle()
+  w.calls.length = 0
+  await ask($, LONG)
+  expect(cli(w)).toEqual([])
 })

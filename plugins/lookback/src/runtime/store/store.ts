@@ -1,8 +1,10 @@
 import type { Database } from 'bun:sqlite'
 import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 import { REDACTED_MARK } from '../../core/text/redact'
-import type { ChunkVector, CommandUse, Entry, EntryKind, FileUse, Filter, ForgottenSession, Ranked, SessionSummary, StoreStats, StoredEntry, Touch, Turn } from '../../core/types'
+import type { SessionTitle } from '../../core/transcript/entries'
+import type { ChunkVector, CommandUse, Entry, EntryKind, FileUse, Filter, ForgottenSession, Ranked, RecentSession, SessionSummary, StoreStats, StoredEntry, Touch, Turn } from '../../core/types'
 import { MIN_EMBEDDED_CHARS } from '../../core/types'
 import { commandQuery } from './commands'
 import { acquireWriteLock, openDatabase } from './database'
@@ -10,7 +12,7 @@ import type { Params } from './database'
 import { StoreMissingError } from './errors'
 import { clauseOf } from './filters'
 import { lexicalQuery, matchExpression } from './lexical'
-import { SCHEMA, SCHEMA_VERSION, TABLES } from './schema'
+import { MIGRATIONS, SCHEMA, SCHEMA_VERSION, TABLES } from './schema'
 import { dropQuantized, encodeVector, initVectors, quantizeVectors, scanFunction } from './vectors'
 import type { VectorSpace } from './vectors'
 
@@ -40,6 +42,15 @@ const atLeastOne = (limit: number): number => Math.max(1, Math.trunc(limit))
 const FILE_USE = `path, session, min(parent) as parent, min(project) as project,
   sum(action = 'edit') as edits, sum(action = 'read') as reads,
   coalesce(min(case when action = 'edit' then ts end), min(ts)) as first, max(ts) as last`
+
+// A resumed session's transcript starts with the rows of the session before it. Such a copy of a tool call
+// is passed over: the call belongs to the transcript read first.
+const NOT_A_COPY = `not exists (select 1 from touches o
+  where o.path = t.path and o.ts = t.ts and o.action = t.action and o.tool = t.tool and o.session <> t.session and o.id < t.id)`
+
+// A path as a session spelled it, read from the folder the session ran in.
+const WHOLE_PATH = `case when substr(path, 1, 1) = '/' then path
+  else project || '/' || case when substr(path, 1, 2) = './' then substr(path, 3) else path end end`
 
 // The index: sessions' entries, a full-text index over them and their vectors, in one SQLite file. One
 // process writes at a time; any number read, also while it writes.
@@ -93,7 +104,7 @@ export class Store {
     const current = this.schemaVersion() === SCHEMA_VERSION
     if (this.readOnly && !current) throw new StoreMissingError(this.path)
     if (!this.readOnly) {
-      if (!current) for (const table of TABLES) this.db.exec(`drop table if exists ${table}`)
+      if (!current && !this.migrate()) for (const table of TABLES) this.db.exec(`drop table if exists ${table}`)
       this.db.exec(SCHEMA)
       this.setMeta('schema', SCHEMA_VERSION)
     }
@@ -103,6 +114,27 @@ export class Store {
       this.space = { model, dimension }
       initVectors(this.db, dimension)
     }
+  }
+
+  // Brings an older index up to this version step by step, and says whether it could. Every transcript is
+  // then read again, since a new version reads more from each row.
+  private migrate(): boolean {
+    const steps: string[] = []
+    for (let version = this.schemaVersion(); version !== SCHEMA_VERSION; version = String(Number(version) + 1)) {
+      const step = version === null ? undefined : MIGRATIONS[version]
+      if (step === undefined) return false
+      steps.push(step)
+    }
+    this.db.transaction(() => {
+      for (const step of steps) this.db.exec(step)
+      this.forgetReadPositions()
+    })()
+    return true
+  }
+
+  // Makes the next index run read every transcript from its start.
+  forgetReadPositions(): void {
+    this.run('delete from files')
   }
 
   // The version the file was written under, or null for a file with no index in it.
@@ -131,26 +163,76 @@ export class Store {
     })
   }
 
-  // `source` is the transcript the entries came from; the tests that need none leave it empty.
+  // `source` is the transcript the entries came from; the tests that need none leave it empty. An entry whose
+  // key is already stored is left out, and has no id in the answer.
   addEntries(entries: readonly Entry[], source = ''): number[] {
     this.assertWritable()
-    const insert = this.db.query('insert into entries (source, session, parent, project, kind, ts, text) values ($source, $session, $parent, $project, $kind, $ts, $text)')
+    const insert = this.db.query(
+      "insert into entries (source, session, parent, project, kind, ts, text, key) values ($source, $session, $parent, $project, $kind, $ts, $text, $key) on conflict (key) where key <> '' do nothing returning id",
+    )
     return this.db.transaction(() =>
-      entries.map(e =>
-        Number(insert.run({ source, session: e.session, parent: e.parent ?? '', project: e.project, kind: e.kind, ts: Math.trunc(e.ts), text: e.text }).lastInsertRowid),
-      ),
+      entries.flatMap(e => {
+        const done = insert.get({ source, session: e.session, parent: e.parent ?? '', project: e.project, kind: e.kind, ts: Math.trunc(e.ts), text: e.text, key: e.key ?? '' }) as { id: number } | null
+        return done === null ? [] : [done.id]
+      }),
     )()
+  }
+
+  setTitles(titles: readonly SessionTitle[]): void {
+    this.assertWritable()
+    const kept = this.keeper()
+    const put = this.db.query(
+      `insert into titles (session, title, custom) values ($session, $title, $custom)
+       on conflict (session) do update set title = excluded.title, custom = excluded.custom where excluded.custom >= titles.custom`,
+    )
+    this.db.transaction(() => {
+      for (const t of titles.filter(kept)) put.run({ session: t.session, title: t.title, custom: t.isCustom ? 1 : 0 })
+    })()
+  }
+
+  titles(sessions: readonly string[]): Map<string, string> {
+    const found = this.all<{ session: string; title: string }>(`select session, title from titles where session in (${sessions.map(() => '?').join(', ') || "''"})`, sessions as never)
+    return new Map(found.map(r => [r.session, r.title]))
+  }
+
+  // The sessions a person ran in a folder or under it, the latest first, each with its title, first prompt and
+  // the last thing Claude said. An empty folder name takes every folder, and `exact` leaves out the folders
+  // under it. Claude Code titles a session a person typed in, so `titledOnly` leaves out the ones another
+  // session drove.
+  recent(project: string, limit: number, exclude = '', titledOnly = false, exact = false): RecentSession[] {
+    const inFolder = exact ? 'e.project = $project' : "(e.project = $project or substr(e.project, 1, length($project) + 1) = $project || '/')"
+    return this.all<RecentSession>(
+      `select e.session, min(e.project) as project, max(e.ts) as last, t.title,
+         (select u.text from entries u where u.session = e.session and u.kind = 'user' order by u.ts, u.id limit 1) as asked,
+         (select a.text from entries a where a.session = e.session and a.kind = 'assistant' order by a.ts desc, a.id desc limit 1) as ended
+       from entries e left join titles t on t.session = e.session
+       where e.parent = '' and e.session <> $exclude ${titledOnly ? 'and t.title is not null' : ''} and ($project = '' or ${inFolder})
+       group by e.session order by last desc, e.session limit ${atLeastOne(limit)}`,
+      { project, exclude },
+    )
+  }
+
+  // The folders that sessions ran in.
+  projects(): string[] {
+    return this.all<{ project: string }>("select distinct project from entries where parent = '' and project <> ''").map(r => r.project)
+  }
+
+  // The last thing Claude said in each session that passes the filter, the latest session first.
+  lastAnswers(limit: number, filter: Filter): Ranked[] {
+    const where = clauseOf({ ...filter, kinds: ['assistant'] }, 'e')
+    return this.all<Ranked>(`select max(e.id) as id, 1.0 as score from entries e where e.parent = '' and ${where.sql} group by e.session order by max(e.ts) desc, e.session limit ${atLeastOne(limit)}`, where.params)
   }
 
   // Stores the entries read from a transcript and how far it was read, in one transaction: after a crash the
   // position never runs ahead of the entries, and no line is stored twice. What belongs to a forgotten session
   // is left out.
-  ingest(path: string, entries: readonly Entry[], state: FileState, touches: readonly Touch[] = []): number[] {
+  ingest(path: string, entries: readonly Entry[], state: FileState, touches: readonly Touch[] = [], titles: readonly SessionTitle[] = []): number[] {
     this.assertWritable()
     const kept = this.keeper()
     return this.db.transaction(() => {
       const ids = this.addEntries(entries.filter(kept), path)
       this.addTouches(touches.filter(kept), path)
+      this.setTitles(titles)
       this.setFileState(path, state)
       return ids
     })()
@@ -195,13 +277,22 @@ export class Store {
   }
 
   // What each session did to the files whose path is `suffix` or ends with it at a folder boundary, the
-  // latest session first. Sessions that only read are left out unless `reads` is set.
-  fileUses(suffix: string, options: { reads?: boolean; limit: number }): FileUse[] {
+  // latest session first. Sessions that only read are left out unless `reads` is set. With `within`, the
+  // path is read from that folder and names one file, however a session spelled it.
+  fileUses(suffix: string, options: { reads?: boolean; limit: number; within?: string }): FileUse[] {
+    const edited = options.reads === true ? '' : 'having edits > 0'
+    if (options.within !== undefined && options.within !== '') {
+      return this.all<FileUse & { parent: string }>(
+        `select ${FILE_USE} from touches t where ${WHOLE_PATH} = $whole and ${NOT_A_COPY}
+         group by session ${edited} order by last desc limit ${atLeastOne(options.limit)}`,
+        { whole: resolve(options.within, suffix) },
+      ).map(withParent)
+    }
     const tail = `/${suffix.replace(/^\/+/, '')}`
     return this.all<FileUse & { parent: string }>(
-      `select ${FILE_USE} from touches
-       where path = $suffix or substr(path, -length($tail)) = $tail
-       group by path, session ${options.reads === true ? '' : 'having edits > 0'}
+      `select ${FILE_USE} from touches t
+       where (path = $suffix or substr(path, -length($tail)) = $tail) and ${NOT_A_COPY}
+       group by path, session ${edited}
        order by last desc, path limit ${atLeastOne(options.limit)}`,
       { suffix, tail },
     ).map(withParent)
@@ -209,7 +300,7 @@ export class Store {
 
   // The files one session touched, the most changed first.
   sessionFiles(session: string, limit: number): FileUse[] {
-    return this.all<FileUse & { parent: string }>(`select ${FILE_USE} from touches where session = $session group by path order by edits desc, reads desc, path limit ${atLeastOne(limit)}`, {
+    return this.all<FileUse & { parent: string }>(`select ${FILE_USE} from touches t where session = $session and ${NOT_A_COPY} group by path order by edits desc, reads desc, path limit ${atLeastOne(limit)}`, {
       session,
     }).map(withParent)
   }
@@ -220,6 +311,16 @@ export class Store {
     const before = this.one<{ text: string }>("select text from entries where session = $session and kind = 'user' and ts <= $ts order by ts desc, id desc limit 1", params)
     const found = before ?? this.one<{ text: string }>("select text from entries where session = $session and kind = 'user' and ts > $ts order by ts, id limit 1", params)
     return found?.text ?? null
+  }
+
+  // `skip` passes over an entry with that text: the prompt being asked may already be on record.
+  lastSaid(session: string, kind: EntryKind, before: number, skip = ''): { text: string; ts: number } | null {
+    return this.one<{ text: string; ts: number }>('select text, ts from entries where session = $session and kind = $kind and ts < $before and trim(text) <> $skip order by ts desc, id desc limit 1', {
+      session,
+      kind,
+      before: Math.trunc(before),
+      skip: skip.trim(),
+    })
   }
 
   // The turn an entry is in: the prompt that opened it, the last thing Claude said in it after the entry, and
@@ -311,6 +412,7 @@ export class Store {
       })
       this.dropWhere('session', session)
       this.dropWhere('parent', session)
+      this.run('delete from titles where session = $session', { session })
     })()
     return found.n
   }
@@ -392,8 +494,9 @@ export class Store {
   }
 
   // Entries that should have a vector and do not yet, oldest first.
-  pending(limit: number): { id: number; text: string }[] {
-    return this.all(`select id, text ${this.awaiting} order by id limit ${atLeastOne(limit)}`)
+  pending(limit: number, session = ''): { id: number; text: string }[] {
+    const only = session === '' ? '' : 'and (e.session = $session or e.parent = $session)'
+    return this.all(`select id, text ${this.awaiting} ${only} order by id limit ${atLeastOne(limit)}`, session === '' ? {} : { session })
   }
 
   countPending(): number {
@@ -429,13 +532,17 @@ export class Store {
     return this.meta('compact') === '1'
   }
 
-  // How many entries of a kind hold each term, and how many entries of that kind there are.
-  termCounts(terms: readonly string[], kind: EntryKind): { total: number; counts: number[] } {
+  // How many entries of a kind, or of several kinds, hold each term, and how many such entries there are.
+  // With `commonShare`, the count of a term stops at the first number past that share of the entries: a
+  // caller that only asks whether a term is that common is spared the full count.
+  termCounts(terms: readonly string[], kind: EntryKind | readonly EntryKind[], commonShare?: number): { total: number; counts: number[] } {
+    const kinds = kindList(typeof kind === 'string' ? [kind] : kind)
+    const total = this.one<{ n: number }>(`select count(*) as n from entries where kind in (${kinds})`)?.n ?? 0
+    const stop = commonShare === undefined ? '' : `limit ${Math.floor(commonShare * total) + 1}`
     const count = (match: string | null): number =>
       match === null
         ? 0
-        : (this.one<{ n: number }>('select count(*) as n from entries_fts join entries e on e.id = entries_fts.rowid where entries_fts match $match and e.kind = $kind', { match, kind })?.n ?? 0)
-    const total = this.one<{ n: number }>('select count(*) as n from entries where kind = $kind', { kind })?.n ?? 0
+        : (this.one<{ n: number }>(`select count(*) as n from (select 1 from entries_fts join entries e on e.id = entries_fts.rowid where entries_fts match $match and e.kind in (${kinds}) ${stop})`, { match })?.n ?? 0)
     return { total, counts: terms.map(t => count(matchExpression([t]))) }
   }
 

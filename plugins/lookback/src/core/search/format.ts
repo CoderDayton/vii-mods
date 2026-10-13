@@ -29,12 +29,25 @@ export const snippetOf = (text: string, terms: readonly string[], width: number)
 
 export const folderOf = (project: string): string => project.split('/').filter(Boolean).pop() ?? '-'
 
-export const dateOf = (ts: number): string => new Date(ts).toISOString().slice(0, 10)
+// The day in local time, as a question about "yesterday" is read.
+export const dateOf = (ts: number): string => {
+  const d = new Date(ts)
+  return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-')
+}
 
-const SHORT_ID = 8
+export const SHORT_ID = 8
 
-export const headOf = (hit: { ts: number; project: string; session: string; parent?: string }): string =>
-  `${dateOf(hit.ts)}  ${folderOf(hit.project)}  ${hit.session.slice(0, SHORT_ID)}${hit.parent === undefined ? '' : `  sub-agent of ${hit.parent.slice(0, SHORT_ID)}`}`
+export const OWN_MARK = 'this session, earlier'
+
+export const headOf = (hit: { ts: number; project: string; session: string; parent?: string; title?: string; own?: true }): string =>
+  [
+    dateOf(hit.ts),
+    folderOf(hit.project),
+    hit.session.slice(0, SHORT_ID),
+    ...(hit.parent === undefined ? [] : [`sub-agent of ${hit.parent.slice(0, SHORT_ID)}`]),
+    ...(hit.own === true ? [OWN_MARK] : []),
+    ...(hit.title === undefined ? [] : [hit.title]),
+  ].join('  ')
 
 // The leading blocks that fit in `maxChars` with room for a last line; at least one is kept.
 export const fitBlocks = (blocks: readonly string[], maxChars: number): string[] => {

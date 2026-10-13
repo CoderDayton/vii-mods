@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { join } from 'node:path'
 
 import { main } from '../../src/cli/main'
-import { Projects, assistantRow, commandRow, errorRow, tempDir, userRow } from './helpers'
+import { Projects, assistantRow, commandRow, errorRow, tempDir, toolRow, userRow } from './helpers'
 
 const A = 'aaaa1111-0000-0000-0000-000000000001'
 const B = 'aaaa2222-0000-0000-0000-000000000002'
@@ -59,6 +59,60 @@ test('show prints a session found by the start of its id, every entry in order',
   expect(lines[0]).toContain('5 entries')
   expect(lines.slice(1).map(l => l.slice(6, 15).trim())).toEqual(['user', 'cmd', 'error', 'cmd', 'assistant'])
   expect(lines[4]).toBe('10:03 cmd       pip install pillow')
+})
+
+test('recall prints nothing when the index holds no vectors, and needs a prompt', async () => {
+  const none = await run(['recall', '--project', '/work', '--', 'make the thumbnails for the gallery again please'])
+  expect(none).toEqual({ code: 0, out: '', err: '' })
+  expect((await run(['recall'])).code).toBe(2)
+})
+
+const D = 'dddd4444-0000-0000-0000-000000000004'
+
+// Enough other entries that a word of the test is not a common one, then a session the index has not read:
+// an early turn, a compaction, and the exchange before the question.
+const writeCompacted = async (): Promise<void> => {
+  projects.write(
+    'proj',
+    'filler',
+    Array.from({ length: 300 }, (_, i) => userRow(`Unrelated note number ${i} about something else`, { session: 'filler', ts: at(5) })),
+  )
+  await run(['index', '--no-embed'])
+  projects.write('proj', D, [
+    userRow('Make the gallery thumbnails with pillow', { session: D, ts: at(30) }),
+    assistantRow('Rebuilt the gallery thumbnails with pillow, all 40 of them.', { session: D, ts: at(31) }),
+    JSON.stringify({ type: 'user', sessionId: D, cwd: '/work/app', timestamp: at(40), isCompactSummary: true, message: { role: 'user', content: 'This session is being continued.' } }),
+    userRow('now check the gallery thumbnails', { session: D, ts: at(41) }),
+    assistantRow('The gallery thumbnails are sharp, and pillow wrote each one.', { session: D, ts: at(42) }),
+  ])
+}
+
+test('recall --asked reads the new turns of the session asking and answers from its earlier ones', async () => {
+  await writeCompacted()
+  projects.write('proj', 'unread', [userRow('a zebracrossing remark', { session: 'unread' })])
+  const { code, out } = await run(['recall', '--asked', '--session', D, '--', 'did you rebuild it?'])
+  expect(code).toBe(0)
+  expect(out).toContain('dddd4444  this session, earlier')
+  expect(out).toContain('Rebuilt the gallery thumbnails with pillow')
+  expect(out).not.toContain('are sharp')
+  expect((await run(['search', '--keyword', 'zebracrossing'])).out).toContain('No past session matches.')
+})
+
+test('search --own reads the new turns of a session and finds its earlier ones, but not the turn it is in', async () => {
+  await writeCompacted()
+  const early = await run(['search', '--keyword', '--own', D, '--', 'rebuilt gallery thumbnails pillow'])
+  expect(early.out).toContain('dddd4444  this session, earlier')
+  expect(early.out).toContain('Rebuilt the gallery thumbnails with pillow')
+  expect(early.out).not.toContain('are sharp')
+  expect((await run(['search', '--keyword', '--own', D, '--', 'sharp'])).out).toContain('No past session matches.')
+  expect((await run(['search', '--keyword', '--exclude', D, '--', 'rebuilt gallery pillow'])).out).not.toContain('dddd4444')
+  expect((await run(['search', '--own', D, '--exclude', D, '--', 'x'])).code).toBe(2)
+})
+
+test('recall --asked prints nothing when nothing is on topic, and needs a session', async () => {
+  await writeCompacted()
+  expect(await run(['recall', '--asked', '--session', C, '--', 'did you rebuild it?'])).toEqual({ code: 0, out: '', err: '' })
+  expect((await run(['recall', '--asked', '--', 'did you rebuild it?'])).code).toBe(2)
 })
 
 test('show takes a page, a kind and JSON', async () => {
@@ -155,4 +209,60 @@ test('a secret in a transcript never reaches the index, and stats counts it', as
   expect(out).toContain('[redacted:github-token]')
   expect(out).not.toContain(secret)
   expect((await run(['stats'])).out).toContain('redacted  1')
+})
+
+const titleRow = (session: string, aiTitle: string): string => JSON.stringify({ type: 'ai-title', aiTitle, sessionId: session })
+
+test('recent lists the latest sessions of a folder, newest first, by title or else by first prompt', async () => {
+  projects.write('proj', 'titles', [titleRow(A, 'Gallery thumbnails')])
+  await run(['index', '--no-embed'])
+  const { code, out } = await run(['recent', '--project', '/work/app'])
+  expect(code).toBe(0)
+  expect(out).toBe('2026-10-01  app  cccc3333  Rename the config loader\n2026-10-01  app  aaaa1111  Gallery thumbnails\n  ended     Installed pillow; the thumbnails are made now.\n')
+  expect((await run(['recent', '--project', '/work/app', '--exclude', C, '--limit', '1'])).out).toBe('2026-10-01  app  aaaa1111  Gallery thumbnails\n  ended     Installed pillow; the thumbnails are made now.\n')
+  expect((await run(['recent', '--project', '/work', '--exact'])).out).toBe('')
+  expect((await run(['recent', '--project', '/work/none'])).out).toBe('')
+  expect((await run(['recent'])).out.trimEnd().split('\n').filter(l => !l.startsWith(' '))).toHaveLength(3)
+  expect(JSON.parse((await run(['recent', '--project', '/work/api', '--json'])).out)).toEqual([
+    { session: B, project: '/work/api', last: Date.parse(at(12)), title: null, asked: 'Run the thumbnails again', ended: null },
+  ])
+})
+
+test('blame --brief says in a few lines who changed a file, and nothing when too few sessions did', async () => {
+  const E1 = 'eeee5555-0000-0000-0000-000000000005'
+  const E2 = 'ffff6666-0000-0000-0000-000000000006'
+  const edit = (session: string, minute: number) => toolRow('Edit', { file_path: '/work/app/src/a.ts', old_string: 'x', new_string: 'y' }, { session, ts: at(minute) })
+  projects.write('proj', E1, [userRow('Widen the pane', { session: E1, ts: at(30) }), edit(E1, 31)])
+  projects.write('proj', E2, [userRow('Rename the flag', { session: E2, ts: at(40) }), edit(E2, 41)])
+  await run(['index', '--no-embed'])
+
+  const note = await run(['blame', '--brief', '--min', '2', '--', '/work/app/src/a.ts'])
+  expect(note.out).toBe('Changed in 2 earlier sessions; the latest:\n  2026-10-01  ffff6666  Rename the flag\n  2026-10-01  eeee5555  Widen the pane\n')
+  expect((await run(['blame', '--brief', '--min', '3', '--', '/work/app/src/a.ts'])).out).toBe('')
+  expect((await run(['blame', '--brief', '--min', '2', '--exclude', E2, '--', '/work/app/src/a.ts'])).out).toBe('')
+  expect((await run(['blame', '--brief', '--min', '1', '--', '/work/app/src/nothing.ts'])).out).toBe('')
+})
+
+test('blame with a folder reads a path as one file of that folder, however a session spelled it', async () => {
+  const ids = ['eeee5555-0000-0000-0000-000000000005', 'ffff6666-0000-0000-0000-000000000006', 'abab7777-0000-0000-0000-000000000007', 'cdcd8888-0000-0000-0000-000000000008']
+  const edit = (i: number, path: string, cwd: string) => projects.write('proj', ids[i]!, [toolRow('Edit', { file_path: path, old_string: 'x', new_string: 'y' }, { session: ids[i]!, cwd, ts: at(30 + i) })])
+  edit(0, '/work/app/src/a.ts', '/work/app')
+  edit(1, './src/a.ts', '/work/app')
+  edit(2, '/work/api/src/a.ts', '/work/api')
+  edit(3, 'src/a.ts', '/work/api')
+  await run(['index', '--no-embed'])
+
+  const head = async (argv: string[]) => (await run(['blame', '--brief', '--min', '1', ...argv])).out.split('\n').slice(0, 3)
+  const mine = ['Changed in 2 earlier sessions; the latest:', '  2026-10-01  ffff6666', '  2026-10-01  eeee5555']
+  expect(await head(['--project', '/work/app', '--', 'src/a.ts'])).toEqual(mine)
+  expect(await head(['--project', '/work/api', '--', '/work/app/src/a.ts'])).toEqual(mine)
+  expect(await head(['--project', '/work/api', '--', './src/a.ts'])).toEqual(['Changed in 2 earlier sessions; the latest:', '  2026-10-01  cdcd8888', '  2026-10-01  abab7777'])
+  expect((await head(['--', 'src/a.ts']))[0]).toBe('Changed in 4 earlier sessions; the latest:')
+})
+
+test('a search result names the session by its title', async () => {
+  projects.write('proj', 'titles', [titleRow(A, 'Gallery thumbnails')])
+  await run(['index', '--no-embed'])
+  const { out } = await run(['search', 'pillow', '--keyword'])
+  expect(out.split('\n')[0]).toBe('2026-10-01  app  aaaa1111  Gallery thumbnails')
 })

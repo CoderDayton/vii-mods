@@ -28,5 +28,14 @@ export const clauseOf = (filter: Filter, alias = ''): Clause => {
     parts.push(`${col('session')} <> $excludeSession and ${col('parent')} <> $excludeSession`)
     params.excludeSession = filter.excludeSession
   }
+  if (filter.until !== undefined) {
+    parts.push(`${col('ts')} < $until`)
+    params.until = Math.trunc(filter.until)
+  }
+  if (filter.sessionBefore !== undefined) {
+    parts.push(`((${col('session')} <> $own and ${col('parent')} <> $own) or ${col('ts')} < $ownBefore)`)
+    params.own = filter.sessionBefore.session
+    params.ownBefore = Math.trunc(filter.sessionBefore.ts)
+  }
   return { sql: parts.length === 0 ? 'true' : parts.join(' and '), params }
 }

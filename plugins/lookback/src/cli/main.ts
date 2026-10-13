@@ -6,6 +6,8 @@ import { fix } from './commands/fix'
 import { forget } from './commands/forget'
 import { how } from './commands/how'
 import { index } from './commands/index'
+import { recall } from './commands/recall'
+import { recent } from './commands/recent'
 import { search } from './commands/search'
 import { show } from './commands/show'
 import { stats } from './commands/stats'
@@ -13,7 +15,7 @@ import { EXIT, UsageError } from './io'
 import type { ExitCode, Io } from './io'
 import { USAGE } from './usage'
 
-const COMMANDS = { index, search, show, fix, how, blame, files, forget, stats, doctor } as const
+const COMMANDS = { index, search, show, recent, recall, fix, how, blame, files, forget, stats, doctor } as const
 
 const isCommand = (name: string): name is keyof typeof COMMANDS => Object.hasOwn(COMMANDS, name)
 

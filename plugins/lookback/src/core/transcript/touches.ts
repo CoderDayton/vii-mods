@@ -67,6 +67,9 @@ type Block = { type?: unknown; name?: unknown; input?: unknown }
 
 type FileCall = { tool: string; action: TouchAction; paths: string[]; input: unknown }
 
+export const fileCallOf = (tool: string, input: unknown, isFileTool: FileTools): { action: TouchAction; paths: string[] } | null =>
+  isFileTool(tool) ? { action: CHANGES.test(shortName(tool)) ? 'edit' : 'read', paths: pathsIn(input) } : null
+
 type Base = { session: string; parent?: string; project: string; ts: number }
 
 const fileCallsOf = (row: Row | null, isFileTool: FileTools): { base: Base; calls: FileCall[] } | null => {
@@ -78,8 +81,8 @@ const fileCallsOf = (row: Row | null, isFileTool: FileTools): { base: Base; call
   const base = { ...owner, project: typeof row.cwd === 'string' ? row.cwd : '', ts: Number.isNaN(ts) ? 0 : ts }
   const calls: FileCall[] = []
   for (const block of content as Block[]) {
-    if (block.type !== 'tool_use' || typeof block.name !== 'string' || !isFileTool(block.name)) continue
-    calls.push({ tool: block.name, action: CHANGES.test(shortName(block.name)) ? 'edit' : 'read', paths: pathsIn(block.input), input: block.input })
+    const call = block.type === 'tool_use' && typeof block.name === 'string' ? fileCallOf(block.name, block.input, isFileTool) : null
+    if (call !== null) calls.push({ ...call, tool: block.name as string, input: block.input })
   }
   return { base, calls }
 }
@@ -118,6 +121,7 @@ const sideOf = (mark: string, text: string): string[] => (text === '' ? [] : [`$
 export const editsOfRow = (row: Row | null, isFileTool: FileTools): Entry[] => {
   const found = fileCallsOf(row, isFileTool)
   if (found === null) return []
+  const uuid = typeof row?.uuid === 'string' ? row.uuid : ''
   return found.calls
     .filter(call => call.action === 'edit' && call.paths.length === 1)
     .flatMap(call =>
@@ -126,6 +130,7 @@ export const editsOfRow = (row: Row | null, isFileTool: FileTools): Entry[] => {
         return { kind: 'edit' as const, text: text.slice(0, MAX_ENTRY_CHARS), ...found.base }
       }),
     )
+    .map((edit, i) => (uuid === '' ? edit : { ...edit, key: `${uuid}:e${i}` }))
 }
 
 // The files the tool calls of one transcript line name.

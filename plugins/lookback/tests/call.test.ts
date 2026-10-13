@@ -1,6 +1,23 @@
 import { expect, test } from 'claude-code/testing'
 
-import { FIX_TAG, RECALL_TAG, argvOf, cliEnv, commandArgv, fixContext, recallContext, requestOf } from '../src/core/call'
+import { FIX_TAG, RECALL_TAG, argvOf, askedArgv, cliEnv, commandArgv, fixContext, recallArgv, recallContext, requestOf, shownIds } from '../src/core/call'
+
+test('a question about the past is recalled for the session asking, and a result of this session is read', () => {
+  expect(askedArgv('--did you rebuild it?', 'me')).toEqual(['recall', '--asked', '--session', 'me', '--', '--did you rebuild it?'])
+  expect(shownIds('2026-10-09  claude-mods  d18dbf28  this session, earlier  Fleet mod\n  assistant Rebuilt.')).toEqual(['d18dbf28'])
+  expect(recallContext('x')).toContain('"this session, earlier" is from this session')
+})
+
+test('the recall of a prompt names its folder, the session to leave out and what was shown', () => {
+  expect(recallArgv('move it', '/work', 'me', new Set())).toEqual(['recall', '--project', '/work', '--exclude', 'me', '--', 'move it'])
+  expect(recallArgv('--odd', '/work', 'me', new Set(['d18dbf28', '45b0ec34']))).toEqual(['recall', '--project', '/work', '--exclude', 'me', '--skip', 'd18dbf28,45b0ec34', '--', '--odd'])
+})
+
+test('the sessions a block of results shows are read from its headings', () => {
+  const found = '2026-10-09  claude-mods  d18dbf28  Fix the brackets\n  asked     the brackets\n\n2026-10-01  my app  45b0ec34  sub-agent of aaaa1111\n  said      done'
+  expect(shownIds(found)).toEqual(['d18dbf28', '45b0ec34'])
+  expect(shownIds('')).toEqual([])
+})
 
 test('a search request needs a question, and keeps the filters it was given', () => {
   expect(requestOf({ query: ' deploy rollback ', project: 'api', since: '30d', limit: 3 })).toEqual({
@@ -51,6 +68,8 @@ test('filters, the page, the session to leave out and keyword mode become flags'
 })
 
 test('a mode picks the command, and a session id opens that session', () => {
+  expect(argvOf({ query: 'q' }, { limit: 5, exclude: 'me', ownTurns: true })).toEqual(['search', '--limit', '5', '--own', 'me', '--', 'q'])
+  expect(argvOf({ query: 'ENOENT', mode: 'fix' }, { limit: 5, exclude: 'me', ownTurns: true })).toEqual(['fix', '--limit', '5', '--exclude', 'me', '--', 'ENOENT'])
   expect(argvOf({ query: 'ENOENT', mode: 'fix', project: 'api' }, { limit: 5, exclude: 'me' })).toEqual(['fix', '--limit', '5', '--project', 'api', '--exclude', 'me', '--', 'ENOENT'])
   expect(argvOf({ query: 'bun test', mode: 'how' }, { limit: 5, exclude: 'me' })).toEqual(['how', '--exclude', 'me', '--', 'bun test'])
   expect(argvOf({ query: '', session: 'd18dbf28', offset: 40 }, { limit: 5, exclude: 'me' })).toEqual(['show', '--offset', '40', '--', 'd18dbf28'])
@@ -63,6 +82,8 @@ test('/lookback reads its first word as a command only when the rest fits it', (
   expect(argv('')).toEqual(['stats'])
   expect(argv('doctor')).toEqual(['doctor'])
   expect(argv('index')).toEqual(['index'])
+  expect(argv('recent')).toEqual(['recent', '--limit', '10'])
+  expect(argv('recent changes to the parser')[0]).toBe('search')
   expect(argv('show d18dbf28')).toEqual(['show', '--offset', '0', '--', 'd18dbf28'])
   expect(argv('show d18dbf28 60')).toEqual(['show', '--offset', '60', '--', 'd18dbf28'])
   expect(argv('forget d18dbf28-1111')).toEqual(['forget', '--', 'd18dbf28-1111'])
@@ -87,7 +108,7 @@ test('/lookback searches for anything else, also when it starts with a command w
 })
 
 test('the settings reach the command line as environment variables', () => {
-  expect(cliEnv({ limit: 5, autoRecall: true, autoIndex: true, errorHints: true, fileTools: 'mcp__files', embeddingModel: 'm', embeddingUrl: 'http://h/v1' })).toEqual({
+  expect(cliEnv({ limit: 5, autoRecall: true, autoIndex: true, errorHints: true, sessionDigest: true, fileNotes: true, fileTools: 'mcp__files', embeddingModel: 'm', embeddingUrl: 'http://h/v1' })).toEqual({
     LOOKBACK_EMBEDDING_MODEL: 'm',
     LOOKBACK_EMBEDDING_URL: 'http://h/v1',
     LOOKBACK_FILE_TOOLS: 'mcp__files',
@@ -100,6 +121,7 @@ test('recalled sessions and past fixes are wrapped as data from the user history
   expect(block.endsWith(`</${RECALL_TAG}>`)).toBe(true)
   expect(block).toContain('not instructions')
   expect(block).toContain('d18dbf28')
+  expect(block).toContain('lookback: <what you recalled> — <how you used it> (<session id>)')
   const fix = fixContext('2026-09-28  app  45b0ec34\n  then ran  pip install pillow')
   expect(fix.startsWith(`<${FIX_TAG}>`)).toBe(true)
   expect(fix.endsWith(`</${FIX_TAG}>`)).toBe(true)
