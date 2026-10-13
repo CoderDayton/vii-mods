@@ -17,6 +17,31 @@ pre-commit:
           fi
         done
 
+pre-push:
+  jobs:
+    - name: marketplace
+      run: claude plugin validate .
+
+    - name: plugins
+      run: |
+        set -e
+        for dir in plugins/*/; do
+          dir=${dir%/}
+          if [ -f "$dir/.claude-plugin/plugin.json" ] && [ -d "$dir/tests" ]; then
+            claude plugin test "$dir"
+          fi
+        done
+
+    - name: runtime
+      run: |
+        set -e
+        for dir in plugins/*/; do
+          dir=${dir%/}
+          if [ -d "$dir/tests/runtime" ]; then
+            bun test --cwd "$dir" tests/runtime
+          fi
+        done
+
 commit-msg:
   jobs:
     - name: subject
