@@ -23,6 +23,16 @@ test('the model is told that a request for what to build is not a rule', () => {
   expect(system).toContain('work, not rules')
 })
 
+test('the model is told that a one-off fix is not a rule, and a task rule is a standing constraint', () => {
+  const { system } = buildJudgeRequest({ text: SAID, last: '', rules: [] })
+  expect(system).toContain('a one-off')
+  expect(system).toContain('would not repeat the mistake on a different file, step or day')
+  expect(system).toContain('standing constraint')
+  expect(system).toContain('the point reaches past this moment')
+  expect(system).toContain('is an instruction, not a rule')
+  expect(system).toContain('or only a one-off, answer "none"')
+})
+
 const COMMIT = { tool: 'Bash', input: { command: 'git commit -m "add the cat"' } }
 const ASK = 'stop committing without asking me first'
 
