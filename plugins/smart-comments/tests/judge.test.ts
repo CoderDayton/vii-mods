@@ -174,6 +174,22 @@ test('with docstrings off they are judged like any comment', () => {
   expect(kinds('/** Loads a user. */\nexport function loadUser() {}', 'a.ts', false)).toBe('1:noise')
 })
 
+test('with comments off every new comment is noise, docstrings too, but a tool directive stays', () => {
+  const code = '// 40 ms p99 on the 2024 box\nconst LIMIT = 64\n// eslint-disable-next-line no-console\nconsole.log(1)\n/** Loads a user. */\nexport function loadUser() {}\n// Tail of the happy path\nreturn user'
+  const judged = judgeFile('a.ts', code, true, true)
+  expect(judged.map(j => `${j.line}:${j.kind}:${j.why}`)).toEqual([
+    '1:noise:comments are off',
+    '3:keep:a tool directive',
+    '5:noise:comments are off',
+    '7:noise:comments are off',
+  ])
+})
+
+test('with comments off a licence header stays whole', () => {
+  const code = '// Copyright 2026 Example Ltd.\n// Licensed under the Apache License, Version 2.0.\n// See the LICENSE file for details.\n\n// Tail of the happy path\nreturn user'
+  expect(judgeFile('a.ts', code, true, true).map(j => `${j.line}:${j.kind}`)).toEqual(['1:keep', '2:keep', '3:keep', '5:noise'])
+})
+
 test('rust, go, c and c++ docstrings are skipped', () => {
   const rust = '/// Loads a user.\n#[inline]\npub fn load_user() {}\n//! crate docs\nfn x() {\n    /// load user\n    let u = load_user();\n}'
   expect(kinds(rust, 'a.rs')).toBe('1:doc 4:doc 6:noise')

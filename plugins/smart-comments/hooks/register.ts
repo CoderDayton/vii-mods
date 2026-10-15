@@ -133,7 +133,7 @@ export const register: Register = (on, options) => {
   // The comments a file gained, judged, with the room its new code earns for plain ones.
   const gained = (path: string, b: Before, after: string): Gained => {
     const lines = freshLines(b.before, after, b.syn)
-    const all = judgeFile(path, after, config.allowDocs)
+    const all = judgeFile(path, after, config.allowDocs, config.noComments)
     return {
       all,
       added: all.filter(j => lines.has(j.line) && j.kind !== 'doc'),
@@ -167,7 +167,7 @@ export const register: Register = (on, options) => {
 
       const { all, added, max } = gained(path, { syn, before }, after)
       const crowd = added.length > 0 ? crowdAround(after, all, changedRange(before, after)) : null
-      const note = editNote({ path: shown, judged: added, max, crowd, allowDocs: config.allowDocs })
+      const note = editNote({ path: shown, judged: added, max, crowd, allowDocs: config.allowDocs, noComments: config.noComments })
       if (note === null) return out
       if (config.notify) {
         const flagged = flaggedIn(added, max, crowd)
@@ -193,7 +193,7 @@ export const register: Register = (on, options) => {
         }
         const start = atPrompt === null ? null : await atPrompt
         files.push(...(await shellReports($, { shell, start, touched }, gained)))
-        const prompt = turnPrompt(files, config.allowDocs)
+        const prompt = turnPrompt(files, config.allowDocs, config.noComments)
         if (prompt !== null) {
           isAsked = true
           if (config.notify) {

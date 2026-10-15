@@ -17,6 +17,12 @@
       "description": "Skip a docstring that sits right on a declaration. Off, a docstring is judged like any other comment.",
       "default": true
     },
+    "noComments": {
+      "type": "boolean",
+      "title": "Remove all comments",
+      "description": "Flag every comment Claude adds, docstrings included, and have Claude delete it at the end of the turn. Tool directives, shebangs and licence lines stay.",
+      "default": false
+    },
     "notify": {
       "type": "boolean",
       "title": "Show a toast",

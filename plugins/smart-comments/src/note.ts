@@ -20,7 +20,8 @@ const linesOf = (judged: readonly Judged[]): string => {
 const byFault = (noise: readonly Judged[]): string =>
   [...new Set(noise.map(j => j.why))].map(why => `${linesOf(noise.filter(j => j.why === why))} (${why})`).join(', ')
 
-const closing = (allowDocs: boolean): string => `A comment should say what the code cannot: a figure, a pitfall or a rule.${allowDocs ? ' Docstrings are fine.' : ''}`
+const closing = (allowDocs: boolean, noComments: boolean): string =>
+  noComments ? 'Comments are off: write none.' : `A comment should say what the code cannot: a figure, a pitfall or a rule.${allowDocs ? ' Docstrings are fine.' : ''}`
 
 // How many of a file's new comment lines Claude is asked to act on: the noise, and the plain lines
 // when they are over the limit or sit in a crowded stretch.
@@ -31,7 +32,7 @@ export const flaggedIn = (judged: readonly Judged[], max: number, crowd: Crowd |
 
 // What is wrong with the new comments of one file, or null when nothing is. `judged` holds the new
 // comments only.
-const fileLines = (path: string, judged: readonly Judged[], max: number, crowd: Crowd | null): string[] | null => {
+const fileLines = (path: string, judged: readonly Judged[], max: number, crowd: Crowd | null, noComments: boolean): string[] | null => {
   const tally = tallyOf(judged)
   const noise = judged.filter(j => j.kind === 'noise')
   const plain = judged.filter(j => j.kind === 'plain')
@@ -40,7 +41,7 @@ const fileLines = (path: string, judged: readonly Judged[], max: number, crowd: 
   const kept = judged.filter(j => j.kind === 'keep')
   const fine = kept.length === 0 ? '' : `; ${linesOf(kept)} ${kept.length === 1 ? 'is' : 'are'} fine`
   const out = [`smart-comments: ${plural(tally.keep + tally.plain + tally.noise, 'new comment line')} in ${path}${fine}.`]
-  if (noise.length > 0) out.push(`Delete or rewrite ${byFault(noise)}.`)
+  if (noise.length > 0) out.push(noComments ? `Delete ${linesOf(noise)}.` : `Delete or rewrite ${byFault(noise)}.`)
   if (plain.length > max) {
     const stay = max === 0 ? 'delete' : `keep ${max === 1 ? 'one' : max} of`
     out.push(`${plural(plain.length, 'line')} ${plain.length === 1 ? 'adds' : 'add'} little, and the limit is ${max}: ${stay} ${linesOf(plain)}.`)
@@ -50,12 +51,13 @@ const fileLines = (path: string, judged: readonly Judged[], max: number, crowd: 
   return out
 }
 
-export type EditReport = { path: string; judged: readonly Judged[]; max: number; crowd: Crowd | null; allowDocs: boolean }
+export type EditReport = { path: string; judged: readonly Judged[]; max: number; crowd: Crowd | null; allowDocs: boolean; noComments?: boolean }
 
 // The note Claude reads after an edit, or null when the edit's comments pass.
 export const editNote = (r: EditReport): string | null => {
-  const lines = fileLines(r.path, r.judged, r.max, r.crowd)
-  return lines === null ? null : [...lines, closing(r.allowDocs)].join('\n')
+  const noComments = r.noComments === true
+  const lines = fileLines(r.path, r.judged, r.max, r.crowd, noComments)
+  return lines === null ? null : [...lines, closing(r.allowDocs, noComments)].join('\n')
 }
 
 // The first line of the follow-up prompt. A turn whose prompt holds it was started by this mod.
@@ -64,8 +66,8 @@ export const FOLLOW_UP = 'smart-comments: comments you added this turn need one 
 export type FileReport = { path: string; judged: readonly Judged[]; max: number }
 
 // The prompt sent when a turn ends with files that still trip, or null when none does.
-export const turnPrompt = (files: readonly FileReport[], allowDocs: boolean): string | null => {
-  const blocks = files.map(f => fileLines(f.path, f.judged, f.max, null)).filter(b => b !== null)
+export const turnPrompt = (files: readonly FileReport[], allowDocs: boolean, noComments = false): string | null => {
+  const blocks = files.map(f => fileLines(f.path, f.judged, f.max, null, noComments)).filter(b => b !== null)
   if (blocks.length === 0) return null
-  return [FOLLOW_UP, ...blocks.flat(), `${closing(allowDocs)} Change these lines and nothing else.`].join('\n')
+  return [FOLLOW_UP, ...blocks.flat(), `${closing(allowDocs, noComments)} Change these lines and nothing else.`].join('\n')
 }

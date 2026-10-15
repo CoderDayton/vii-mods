@@ -74,6 +74,23 @@ test('a crowded stretch is named when the edit put a plain comment in it', () =>
   expect(editNote({ path: 'a.ts', judged: kept, max: 3, crowd: { from: 1, to: 12, comments: 6, lines: 12 }, allowDocs: true })).toBe(null)
 })
 
+test('with comments off the note says to delete the lines and to write none', () => {
+  const code = '// 40 ms p99 on the 2024 box\nconst LIMIT = 64\n// Tail of the happy path\nreturn user\n// eslint-disable-next-line no-console\nconsole.log(1)'
+  const off = judgeFile('a.ts', code, true, true)
+  expect(editNote({ path: 'a.ts', judged: off, max: 3, crowd: null, allowDocs: true, noComments: true })).toBe(
+    ['smart-comments: 3 new comment lines in a.ts; L5 is fine.', 'Delete L1, L3.', 'Comments are off: write none.'].join('\n'),
+  )
+  const prompt = turnPrompt([{ path: 'a.ts', judged: off, max: 3 }], true, true)
+  expect(prompt?.split('\n')).toEqual([
+    'smart-comments: comments you added this turn need one more pass.',
+    'smart-comments: 3 new comment lines in a.ts; L5 is fine.',
+    'Delete L1, L3.',
+    'Comments are off: write none. Change these lines and nothing else.',
+  ])
+  const directive = judgeFile('a.ts', '// eslint-disable-next-line no-console\nconsole.log(1)', true, true)
+  expect(editNote({ path: 'a.ts', judged: directive, max: 3, crowd: null, allowDocs: true, noComments: true })).toBe(null)
+})
+
 test('the turn prompt lists every file that still trips, and asks for those lines only', () => {
   const clean = judgeFile('b.ts', '// 40 ms p99 on the 2024 box\nconst LIMIT = 64', true)
   const prompt = turnPrompt([{ path: 'src/a.ts', judged, max: 3 }, { path: 'b.ts', judged: clean, max: 3 }], true)

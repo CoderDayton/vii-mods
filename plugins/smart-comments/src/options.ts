@@ -1,4 +1,4 @@
-export type Config = { max: number; allowDocs: boolean; notify: boolean }
+export type Config = { max: number; allowDocs: boolean; notify: boolean; noComments: boolean }
 
 const DEFAULT_MAX = 3
 const MIN_MAX = 0
@@ -11,5 +11,6 @@ export const readOptions = (o: Readonly<Record<string, unknown>>): Config => {
     max: typeof max === 'number' && Number.isFinite(max) ? Math.min(MAX_MAX, Math.max(MIN_MAX, Math.floor(max))) : DEFAULT_MAX,
     allowDocs: typeof docs === 'boolean' ? docs : true,
     notify: o['notify'] === true,
+    noComments: o['noComments'] === true,
   }
 }

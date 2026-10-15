@@ -363,6 +363,18 @@ test('toasts are off unless asked for', { options: { notify: true } }, async ($,
   expect(w.toasts[1]).toBe('smart-comments: sent Claude back to fix comments in 1 file')
 })
 
+test('with comments off, a comment that would be kept is flagged', { options: { noComments: true } }, async ($, on) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  await submit($)
+  const note = (await write($, w, '/work/a.ts', KEPT)).context?.join('\n')
+  expect(note).toContain('Delete L1.')
+  expect(note).toContain('Comments are off: write none.')
+  await done($)
+  await settle()
+  expect(w.prompts[1]).toContain('Comments are off: write none.')
+})
+
 test('options set the limit and turn docstrings off', { options: { maxPlain: 0, allowDocstrings: false } }, async ($, on) => {
   const w = world(on)
   await $.session.start(LIVE)

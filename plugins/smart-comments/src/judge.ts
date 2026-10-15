@@ -38,8 +38,10 @@ const REASON =
 const CONTRACT =
   /\b(or (null|undefined)|(null|undefined|none) (when|for|if)|[01]-based|which is (how|why)|so (a|an|the|that|they|it|its|their|each|every|two|there|one|no) )\b|^(exit \d|\$\d|arguments?:)|\bin (bytes|bits|characters|columns|cells|rows|pixels|seconds|milliseconds|[km]ib)\b/i
 
+const isDirective = (c: Comment): boolean => c.shebang || DIRECTIVE.test(c.text)
+
 const judgeOne = (c: Comment, code: string): Verdict => {
-  if (c.shebang || DIRECTIVE.test(c.text)) return { kind: 'keep', why: 'a tool directive' }
+  if (isDirective(c)) return { kind: 'keep', why: 'a tool directive' }
   if (HISTORY.some(r => r.test(c.text))) return { kind: 'noise', why: 'tells the edit story' }
   const fresh = newness(c.text, code)
   if (fresh !== null && fresh <= MAX_NEW) return { kind: 'noise', why: 'repeats the code' }
@@ -75,7 +77,8 @@ const declares = (source: string, ext: string): boolean => {
 }
 
 // Every comment of a file with its verdict, in line order. Empty for a file whose comments are not read.
-export const judgeFile = (path: string, text: string, allowDocs: boolean): Judged[] => {
+// With `noComments` every comment but a tool directive is noise, a docstring included.
+export const judgeFile = (path: string, text: string, allowDocs: boolean, noComments = false): Judged[] => {
   const syn = syntaxOf(path)
   if (syn === null) return []
   const ext = extOf(path)
@@ -110,7 +113,15 @@ export const judgeFile = (path: string, text: string, allowDocs: boolean): Judge
   const out: Judged[] = []
   // The verdict of the line above, when it was kept and its sentence has not ended.
   let open: { line: number; why: string } | null = null
+  // With comments off, the last line of a run that a directive opened: a licence header goes on past its first line.
+  let held = -1
   for (const c of list) {
+    if (noComments) {
+      const stays = isDirective(c) || (c.code === '' && c.line === held + 1)
+      held = stays && c.code === '' ? c.line : -1
+      out.push(stays ? { line: c.line, raw: c.raw, kind: 'keep', why: 'a tool directive' } : { line: c.line, raw: c.raw, kind: 'noise', why: 'comments are off' })
+      continue
+    }
     if (allowDocs && isDoc(c)) {
       open = null
       out.push({ line: c.line, raw: c.raw, kind: 'doc', why: 'a docstring' })

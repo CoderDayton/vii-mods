@@ -66,6 +66,7 @@ A `/** */` block over a plain statement, over a local `const`, or with a blank l
 | --- | --- | --- |
 | `maxPlain` | 3 | Plain comment lines an edit, or a file over one turn, may add. 0 to 20. |
 | `allowDocstrings` | on | Off, a docstring is judged like any other comment. |
+| `noComments` | off | On, every new comment is flagged, docstrings too, and Claude is asked to delete it. Tool directives, shebangs and licence lines stay. `maxPlain` and `allowDocstrings` have no effect. |
 | `notify` | off | On, a toast tells you when the mod flags comments in an edit or sends Claude back at the end of a turn. |
 
 ## Files it reads
