@@ -37,8 +37,10 @@ export type ForgottenSession = { session: string; project: string; at: number }
 // made no edit.
 // The kinds whose text is something a person or Claude said, and the kinds whose text is code that was run or
 // written. A search fetches candidates of each sort apart, so one sort cannot fill every place.
-export const PROSE_KINDS: readonly EntryKind[] = ['user', 'assistant', 'thinking', 'error']
+export const PROSE_KINDS: readonly EntryKind[] = ['user', 'assistant', 'thinking', 'error', 'summary']
 export const CODE_KINDS: readonly EntryKind[] = ['cmd', 'edit']
+// The calls of other tools and what they returned: bulk that would fill the places of the other kinds.
+export const BULK_KINDS: readonly EntryKind[] = ['call', 'result']
 
 export type Turn = { start: number; asked?: string; ended?: string; reply?: string }
 

@@ -3,6 +3,8 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { REDACTED_MARK } from '../../core/text/redact'
+import type { Called, Calls } from '../../core/transcript/bulk'
+import { ENTRY_KINDS } from '../../core/transcript/entries'
 import type { SessionTitle } from '../../core/transcript/entries'
 import type { ChunkVector, CommandUse, Entry, EntryKind, FileUse, Filter, ForgottenSession, Ranked, RecentSession, SessionSummary, StoreStats, StoredEntry, Touch, Turn } from '../../core/types'
 import { MIN_EMBEDDED_CHARS } from '../../core/types'
@@ -11,14 +13,22 @@ import { acquireWriteLock, openDatabase } from './database'
 import type { Params } from './database'
 import { StoreMissingError } from './errors'
 import { clauseOf } from './filters'
+import type { Clause } from './filters'
 import { lexicalQuery, matchExpression } from './lexical'
 import { MIGRATIONS, SCHEMA, SCHEMA_VERSION, TABLES } from './schema'
-import { dropQuantized, encodeVector, initVectors, quantizeVectors, scanFunction } from './vectors'
+import type { Migration } from './schema'
+import { encodeVector, initVectors, scanOf } from './vectors'
 import type { VectorSpace } from './vectors'
 
 export type { VectorSpace }
 
-export type OpenOptions = { readOnly?: boolean }
+// `nearestFirst` is how many passages the first pass of a vector search reads; tests set it low.
+export type OpenOptions = { readOnly?: boolean; nearestFirst?: number }
+
+// About 60 ms over 300,000 passages. Large enough that a search with no narrow filter is settled by it.
+const NEAREST_FIRST = 2000
+
+const OPEN_CALLS = 64
 
 export type FileState = { size: number; offset: number }
 
@@ -39,6 +49,13 @@ const kindList = (kinds: readonly EntryKind[]): string => kinds.map(k => `'${k}'
 
 const atLeastOne = (limit: number): number => Math.max(1, Math.trunc(limit))
 
+type Placed = { id: number; dist: number; side: number; place: number }
+
+// Whether a filter leaves out most passages, so that a scan is faster checking each passage against it first.
+// Leaving out one session does not.
+const narrows = (filter: Filter): boolean =>
+  (filter.project !== undefined && filter.project !== '') || (filter.kinds?.length ?? 0) > 0 || filter.since !== undefined || filter.until !== undefined
+
 const FILE_USE = `path, session, min(parent) as parent, min(project) as project,
   sum(action = 'edit') as edits, sum(action = 'read') as reads,
   coalesce(min(case when action = 'edit' then ts end), min(ts)) as first, max(ts) as last`
@@ -56,12 +73,14 @@ const WHOLE_PATH = `case when substr(path, 1, 1) = '/' then path
 // process writes at a time; any number read, also while it writes.
 export class Store {
   private space: VectorSpace | null = null
+  private passMemo: { vector: readonly number[]; at: string; pass: (readonly [number, number])[] } | null = null
 
   private constructor(
     private db: Database,
     private readonly lock: Database | null,
     readonly path: string,
     readonly readOnly: boolean,
+    private readonly nearestFirst: number,
   ) {}
 
   // Throws StoreMissingError when a reader finds no usable index, and StoreBusyError when a writer finds
@@ -73,7 +92,7 @@ export class Store {
     let db: Database | null = null
     try {
       db = openDatabase(path, readOnly)
-      const store = new Store(db, lock, path, readOnly)
+      const store = new Store(db, lock, path, readOnly, options.nearestFirst ?? NEAREST_FIRST)
       store.load()
       return store
     } catch (error) {
@@ -116,19 +135,24 @@ export class Store {
     }
   }
 
-  // Brings an older index up to this version step by step, and says whether it could. Every transcript is
-  // then read again, since a new version reads more from each row.
+  // Brings an older index up to this version step by step, and says whether it could. The file is then
+  // compacted, since a step can free much of it.
   private migrate(): boolean {
-    const steps: string[] = []
+    const steps: Migration[] = []
     for (let version = this.schemaVersion(); version !== SCHEMA_VERSION; version = String(Number(version) + 1)) {
       const step = version === null ? undefined : MIGRATIONS[version]
       if (step === undefined) return false
       steps.push(step)
     }
     this.db.transaction(() => {
-      for (const step of steps) this.db.exec(step)
-      this.forgetReadPositions()
+      for (const step of steps) {
+        if (typeof step.change === 'string') this.db.exec(step.change)
+        else step.change(this.db)
+      }
+      if (steps.some(s => s.reread)) this.forgetReadPositions()
     })()
+    this.db.exec('vacuum')
+    this.reconnect()
     return true
   }
 
@@ -155,12 +179,24 @@ export class Store {
     return this.one<FileState>('select size, offset from files where path = $path', { path })
   }
 
-  setFileState(path: string, state: FileState): void {
-    this.run('insert or replace into files (path, size, offset) values ($path, $size, $offset)', {
+  // `calls` are the tool calls read before the offset whose results were not, so that a run reading on can
+  // name them. Only the latest are kept: a call that never got a result must not pile up.
+  setFileState(path: string, state: FileState, calls: Calls = new Map()): void {
+    this.run('insert or replace into files (path, size, offset, calls) values ($path, $size, $offset, $calls)', {
       path,
       size: Math.trunc(state.size),
       offset: Math.trunc(state.offset),
+      calls: JSON.stringify(Object.fromEntries([...calls].slice(-OPEN_CALLS))),
     })
+  }
+
+  openCalls(path: string): Calls {
+    const row = this.one<{ calls: string }>('select calls from files where path = $path', { path })
+    try {
+      return new Map(Object.entries((JSON.parse(row?.calls ?? '{}') ?? {}) as Record<string, Called>))
+    } catch {
+      return new Map()
+    }
   }
 
   // `source` is the transcript the entries came from; the tests that need none leave it empty. An entry whose
@@ -226,14 +262,14 @@ export class Store {
   // Stores the entries read from a transcript and how far it was read, in one transaction: after a crash the
   // position never runs ahead of the entries, and no line is stored twice. What belongs to a forgotten session
   // is left out.
-  ingest(path: string, entries: readonly Entry[], state: FileState, touches: readonly Touch[] = [], titles: readonly SessionTitle[] = []): number[] {
+  ingest(path: string, entries: readonly Entry[], state: FileState, touches: readonly Touch[] = [], titles: readonly SessionTitle[] = [], calls?: Calls): number[] {
     this.assertWritable()
     const kept = this.keeper()
     return this.db.transaction(() => {
       const ids = this.addEntries(entries.filter(kept), path)
       this.addTouches(touches.filter(kept), path)
       this.setTitles(titles)
-      this.setFileState(path, state)
+      this.setFileState(path, state, calls)
       return ids
     })()
   }
@@ -254,16 +290,37 @@ export class Store {
   }
 
   // Puts these in place of what was recorded about files from one transcript: the files its tool calls named,
-  // and the edit entries. Its other entries and their vectors stay.
-  replaceFileRecords(source: string, touches: readonly Touch[], edits: readonly Entry[]): void {
+  // and the edit entries. Call and result entries go unless `calls` names their key or their id: the ones read
+  // again are added beforehand with addLater. Its other entries and their vectors stay.
+  replaceFileRecords(source: string, touches: readonly Touch[], edits: readonly Entry[], calls: { keys: ReadonlySet<string>; ids: ReadonlySet<number> } = { keys: new Set(), ids: new Set() }): void {
     this.assertWritable()
     const kept = this.keeper()
     this.db.transaction(() => {
       this.run('delete from touches where source = $source', { source })
       this.run("delete from entries where source = $source and kind = 'edit'", { source })
+      for (const row of this.all<{ id: number; key: string }>("select id, key from entries where source = $source and kind in ('call', 'result')", { source })) {
+        if (!calls.keys.has(row.key) && !calls.ids.has(row.id)) this.run('delete from entries where id = $id', { id: row.id })
+      }
       this.addTouches(touches.filter(kept), source)
       this.addEntries(edits.filter(kept), source)
     })()
+  }
+
+  // Stores entries read from a transcript that was read before, leaving every entry it already has. Answers the
+  // ids of the ones added.
+  addLater(source: string, entries: readonly Entry[]): number[] {
+    this.assertWritable()
+    const kept = this.keeper()
+    return this.addEntries(entries.filter(kept), source)
+  }
+
+  get laterRead(): boolean {
+    return this.meta('laterRead') === '1'
+  }
+
+  set laterRead(done: boolean) {
+    this.assertWritable()
+    this.setMeta('laterRead', done ? '1' : '0')
   }
 
   // The setting the recorded files were read under, or null when none were read yet.
@@ -467,12 +524,8 @@ export class Store {
       this.run('delete from chunks')
       this.setMeta('model', space.model)
       this.setMeta('dimension', String(space.dimension))
-      this.setMeta('compact', '0')
     })()
-    if (hadVectors) {
-      dropQuantized(this.db)
-      this.reconnect()
-    }
+    if (hadVectors) this.reconnect()
     initVectors(this.db, space.dimension)
     this.space = space
   }
@@ -513,23 +566,7 @@ export class Store {
         if (c.vector.length !== space.dimension) throw new Error(`a vector has ${c.vector.length} values; the index holds ${space.dimension}`)
         insert.run({ entry: c.entry, seq: c.seq, embedding: encodeVector(c.vector) })
       }
-      this.setMeta('compact', '0')
     })()
-  }
-
-  // Builds the compact copy of the vectors that searches scan, when vectors were stored since it was last
-  // built. Until then searches scan the vectors themselves, which is exact and slower.
-  compactVectors(): void {
-    this.assertWritable()
-    if (this.space === null || this.isCompact) return
-    const { n } = this.one<{ n: number }>('select count(*) as n from chunks') ?? { n: 0 }
-    if (n === 0) return
-    quantizeVectors(this.db)
-    this.setMeta('compact', '1')
-  }
-
-  private get isCompact(): boolean {
-    return this.meta('compact') === '1'
   }
 
   // How many entries of a kind, or of several kinds, hold each term, and how many such entries there are.
@@ -552,26 +589,59 @@ export class Store {
   }
 
   // The entries whose nearest passage is within `maxDistance` (cosine distance, 0 to 2) of the vector, nearest
-  // first, with a score of one minus the distance. The kinds in `apart` are ranked apart from the rest, and
-  // each side gives up to `limit` entries, from one scan of the vectors.
-  semantic(vector: readonly number[], limit: number, filter: Filter, maxDistance = 0.6, apart: readonly EntryKind[] = []): Ranked[] {
+  // first, with a score of one minus the distance. The groups of kinds in `apart` are ranked apart from the rest, and
+  // each side gives up to `limit` entries.
+  //
+  // A first pass ranks only the nearest passages. Let d be the farthest of them: an entry with no passage among
+  // them is at least d away, and one with a passage among them has its nearest one there. So when each side
+  // that the filter allows has `limit` entries nearer than d, or d is past `maxDistance`, or the pass held every
+  // passage, its answer is the whole scan's. Otherwise every passage of the sides still short is read, the
+  // filter's narrow parts applied first. The first pass depends on the vector alone, so searches of one vector
+  // under several filters share it while the index is unchanged.
+  semantic(vector: readonly number[], limit: number, filter: Filter, maxDistance = 0.6, apart: readonly (readonly EntryKind[])[] = []): Ranked[] {
     if (this.space === null || this.space.dimension !== vector.length) return []
-    const where = clauseOf(filter, 'e')
-    const side = apart.length === 0 ? '0' : `e.kind in (${kindList(apart)})`
-    const rows = this.all<{ id: number; dist: number }>(
-      `select id, dist from (
-         select c.entry as id, min(v.distance) as dist,
-           row_number() over (partition by ${side} order by min(v.distance), c.entry desc) as place
-         from ${scanFunction(this.isCompact)} v
-           join chunks c on c.id = v.rowid
-           join entries e on e.id = c.entry
-         where v.distance <= $max and ${where.sql}
-         group by c.entry)
-       where place <= ${atLeastOne(limit)}
-       order by dist, id desc`,
-      { ...where.params, query: encodeVector(vector), max: maxDistance },
-    )
-    return rows.map(r => ({ id: r.id, score: 1 - r.dist }))
+    const sideOf = (kind: EntryKind): number => apart.findIndex(kinds => kinds.includes(kind)) + 1
+    const side = apart.length === 0 ? '0' : `case ${apart.map((kinds, i) => `when e.kind in (${kindList(kinds)}) then ${i + 1}`).join(' ')} else 0 end`
+    const kept = atLeastOne(limit)
+    const query = encodeVector(vector)
+    const ranked = (where: Clause, scan: string, also = '', near?: string): Placed[] =>
+      this.all<Placed>(
+        `select id, dist, side, place from (
+           select c.entry as id, min(v.distance) as dist, ${side} as side,
+             row_number() over (partition by ${side} order by min(v.distance), c.entry desc) as place
+           from ${scan} v
+             join chunks c on c.id = v.rowid
+             join entries e on e.id = c.entry
+           where v.distance <= $max and ${where.sql} ${also}
+           group by c.entry)
+         where place <= ${kept}`,
+        { ...where.params, query, max: maxDistance, ...(near === undefined ? {} : { near }) },
+      )
+
+    const pass = this.firstPass(vector, query)
+    const far = pass.reduce((most, [, distance]) => Math.max(most, distance), 0)
+    const near = ranked(clauseOf(filter, 'e'), '(select value ->> 0 as rowid, value ->> 1 as distance from json_each($near))', '', JSON.stringify(pass))
+    const allowed = filter.kinds !== undefined && filter.kinds.length > 0 ? filter.kinds : ENTRY_KINDS
+    const sides = [...new Set(allowed.map(sideOf))]
+    const short = pass.length < this.nearestFirst || far > maxDistance ? [] : sides.filter(s => !near.some(r => r.side === s && r.place === kept && r.dist < far))
+    let rows = near
+    if (short.length > 0) {
+      const rest = { ...filter, kinds: allowed.filter(k => short.includes(sideOf(k))) }
+      const where = clauseOf(rest, 'e')
+      const prefilter = narrows(filter) || short.length < sides.length ? `and v.rowid in (select c.id from chunks c join entries e on e.id = c.entry where ${where.sql})` : ''
+      rows = [...near.filter(r => !short.includes(r.side)), ...ranked(where, scanOf(), prefilter)]
+    }
+    return rows.sort((a, b) => a.dist - b.dist || b.id - a.id).map(r => ({ id: r.id, score: 1 - r.dist }))
+  }
+
+  // The nearest passages to a vector, as [rowid, distance], kept for the last vector asked until the index changes.
+  private firstPass(vector: readonly number[], query: Uint8Array): (readonly [number, number])[] {
+    const mark = this.one<{ v: number; c: number }>('select (select data_version from pragma_data_version) as v, total_changes() as c')
+    const at = `${mark?.v} ${mark?.c} ${this.nearestFirst}`
+    if (this.passMemo?.vector === vector && this.passMemo.at === at) return this.passMemo.pass
+    const pass = this.all<{ rowid: number; distance: number }>(`select rowid, distance from ${scanOf(this.nearestFirst)}`, { query }).map(r => [r.rowid, r.distance] as const)
+    this.passMemo = { vector, at, pass }
+    return pass
   }
 
   stats(): StoreStats {

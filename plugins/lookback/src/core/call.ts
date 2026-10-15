@@ -64,7 +64,7 @@ export const TOOL_SPEC = {
       query: { type: 'string', description: 'The question or exact text to look for. Not needed with `session`.' },
       mode: { type: 'string', enum: MODES, description: 'search (the default), fix, how or blame.' },
       session: { type: 'string', description: 'A session id from an earlier result, or its start: reads that session instead of searching.' },
-      kind: { type: 'array', items: { type: 'string', enum: ENTRY_KINDS }, description: 'Only entries of these kinds, in a search or a session read. Every kind when left out.' },
+      kind: { type: 'array', items: { type: 'string', enum: ENTRY_KINDS }, description: 'Only entries of these kinds, in a search or a session read. Every kind when left out. `cmd` is a shell command, `edit` a change to a file, `call` a call to any other tool, `result` what a tool returned, `summary` what a compaction kept.' },
       offset: { type: 'number', description: 'Where to go on: sessions to pass over in a search, entries in a session.' },
       project: { type: 'string', description: 'Only sessions whose working folder contains this text.' },
       since: { type: 'string', description: 'Only the last span of time, such as 12h, 30d or 2w.' },

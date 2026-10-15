@@ -5,7 +5,7 @@ import { groupBySession, names, newestFirst } from '../core/search/group'
 import type { SessionHit } from '../core/search/group'
 import { whenOf } from '../core/search/when'
 import { holdsEvery, MAX_TERMS, rarest, termsOf, wordsNeeded } from '../core/text/terms'
-import { CODE_KINDS, PROSE_KINDS } from '../core/types'
+import { BULK_KINDS, CODE_KINDS, PROSE_KINDS } from '../core/types'
 import type { EntryKind, Filter, Ranked, StoredEntry } from '../core/types'
 import { withContext } from './context'
 import { EmbeddingUnavailableError } from './embedding/embedder'
@@ -84,7 +84,7 @@ const merged = (lists: readonly Ranked[][]): Ranked[] => {
 // apart as well: its sessions may not say its name.
 export const retrieve = async (store: Store, embedder: Embedder | null, query: string, options: SearchOptions): Promise<Found> => {
   const written = termsOf(query, READ_TERMS)
-  const kept = written.length > MAX_TERMS ? rarest(written, store.termCounts(written, [...PROSE_KINDS, ...CODE_KINDS]).counts, MAX_TERMS) : written
+  const kept = written.length > MAX_TERMS ? rarest(written, store.termCounts(written, [...PROSE_KINDS, ...CODE_KINDS, ...BULK_KINDS]).counts, MAX_TERMS) : written
   const terms = [...new Set([...kept, ...(options.extraTerms ?? [])])]
   const limit = options.limit ?? DEFAULT_LIMIT
   const asked = Math.max(CANDIDATES, (Math.max(0, options.offset ?? 0) + limit) * CANDIDATES_PER_SESSION)
@@ -93,7 +93,7 @@ export const retrieve = async (store: Store, embedder: Embedder | null, query: s
   const named = filter.project === undefined || filter.project === '' ? store.projects().filter(p => names(terms, p)).slice(0, NAMED_PROJECTS) : []
   const scopes: Filter[] = [filter, ...named.map(project => ({ ...filter, project }))]
   const everyKind = options.kinds === undefined || options.kinds.length === 0
-  const wordsIn = (scope: Filter): Ranked[] => (everyKind ? [PROSE_KINDS, CODE_KINDS].flatMap(kinds => store.lexical(terms, asked, { ...scope, kinds })) : store.lexical(terms, asked, scope))
+  const wordsIn = (scope: Filter): Ranked[] => (everyKind ? [PROSE_KINDS, CODE_KINDS, BULK_KINDS].flatMap(kinds => store.lexical(terms, asked, { ...scope, kinds })) : store.lexical(terms, asked, scope))
   const words = merged(scopes.map(wordsIn))
 
   let meaning: Ranked[] = []
@@ -101,7 +101,7 @@ export const retrieve = async (store: Store, embedder: Embedder | null, query: s
   if (options.keywordOnly !== true && embedder !== null && store.vectors?.model === embedder.model) {
     try {
       const [vector] = await embedder.embed([query], 'query')
-      meaning = vector === undefined ? [] : merged(scopes.map(scope => store.semantic(vector, asked, scope, undefined, everyKind ? CODE_KINDS : [])))
+      meaning = vector === undefined ? [] : merged(scopes.map(scope => store.semantic(vector, asked, scope, undefined, everyKind ? [CODE_KINDS, BULK_KINDS] : [])))
       semantic = 'used'
     } catch (error) {
       if (!(error instanceof EmbeddingUnavailableError)) throw error

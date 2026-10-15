@@ -15,7 +15,7 @@ Commands:
         --limit <n>        sessions to return (default 5)
         --offset <n>       pass over the best n sessions, to read the next page
         --project <text>   only sessions whose folder contains the text
-        --kind <kind>      user, assistant, thinking, error, cmd or edit; repeatable
+        --kind <kind>      user, assistant, thinking, error, cmd, edit, summary, call or result; repeatable
         --since <span>     only the last span, such as 12h, 30d or 2w
         --exclude <id>     leave one session out, usually the current one
         --own <id>         the session asking: read its new turns first, and

@@ -46,6 +46,18 @@ test('a span of time in the question limits the search and is not a word of it',
   expect(found.terms).toEqual(['pillow', 'install'])
 })
 
+test('what a tool returned, what a tool was asked and a compaction summary are found, under what was said', async () => {
+  const text = 'the connection pool hands out sockets'
+  store.addEntries([
+    entry(text, { session: 'said' }),
+    entry(text, { session: 'returned', kind: 'result' }),
+    entry(text, { session: 'asked', kind: 'call' }),
+    entry(text, { session: 'compacted', kind: 'summary' }),
+  ])
+  expect((await ask('connection pool sockets', null)).hits.map(h => h.session)).toEqual(['said', 'compacted', 'asked', 'returned'])
+  expect((await ask('connection pool sockets', null, { kinds: ['result'] })).hits.map(h => h.session)).toEqual(['returned'])
+})
+
 test('a word match needs two fifths of the words of a question of three or more', async () => {
   store.addEntries([
     entry('the cache ttl is five minutes', { session: 'two' }),

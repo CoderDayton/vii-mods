@@ -2,7 +2,7 @@ import { chunksOf } from '../text/chunk'
 import { redact } from '../text/redact'
 import { isCommandRow, stripInjected } from './strip'
 
-export const ENTRY_KINDS = ['user', 'assistant', 'thinking', 'error', 'cmd', 'edit'] as const
+export const ENTRY_KINDS = ['user', 'assistant', 'thinking', 'error', 'cmd', 'edit', 'summary', 'call', 'result'] as const
 
 export type EntryKind = (typeof ENTRY_KINDS)[number]
 
@@ -44,10 +44,16 @@ export type Row = {
   message?: { content?: unknown }
 }
 
-const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
+export const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
+
+// A text with its secrets redacted, as the passages of an entry: one, or up to MAX_PARTS when it is longer.
+export const passagesOf = (raw: string): string[] => {
+  const whole = redact(raw.trim())
+  return (whole.length <= MAX_ENTRY_CHARS ? [whole] : chunksOf(whole, { maxChars: MAX_ENTRY_CHARS, maxChunks: MAX_PARTS })).filter(text => text !== '')
+}
 
 // The text of a tool result, which is a string or a list of text blocks.
-const resultText = (content: unknown): string => {
+export const resultText = (content: unknown): string => {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   return (content as Block[])
@@ -125,11 +131,7 @@ export const entriesOfRow = (row: Row | null): Entry[] => {
   const out: Entry[] = []
   const uuid = asString(row.uuid)
   const push = (kind: EntryKind, raw: string): void => {
-    const whole = redact(raw.trim())
-    const parts = whole.length <= MAX_ENTRY_CHARS ? [whole] : chunksOf(whole, { maxChars: MAX_ENTRY_CHARS, maxChunks: MAX_PARTS })
-    for (const text of parts) {
-      if (text !== '') out.push(uuid === '' ? { kind, text, ...base } : { kind, text, ...base, key: `${uuid}:${out.length}` })
-    }
+    for (const text of passagesOf(raw)) out.push(uuid === '' ? { kind, text, ...base } : { kind, text, ...base, key: `${uuid}:${out.length}` })
   }
   const prose = (kind: EntryKind, raw: string): void => {
     if (!isCommandRow(raw)) push(kind, stripInjected(raw))

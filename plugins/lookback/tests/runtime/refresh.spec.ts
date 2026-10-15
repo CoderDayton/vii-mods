@@ -45,7 +45,7 @@ test('a refresh of a session with no transcript reads nothing', async () => {
   expect(await refreshSession(store, { projectsRoot: projects.root, session: 'absent', embedder: null })).toMatchObject({ files: 0, entries: 0 })
 })
 
-test('a refresh embeds the new entries, and the compact copy is left for a full run to build', async () => {
+test('a refresh embeds the new entries, and a search by meaning finds them at once', async () => {
   const mine = projects.write('proj', 'mine', [userRow('first question about the parser', { session: 'mine' })])
   const embedder = new FakeEmbedder()
   await indexAll(store, { projectsRoot: projects.root, embedder })

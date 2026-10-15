@@ -97,7 +97,7 @@ test('files lists what a session touched, the most changed first', async () => {
   await index()
   const { code, out } = await run(['files', 'aaaa1'])
   expect(code).toBe(0)
-  expect(out.trimEnd().split('\n')).toEqual([`${A}  app  2026-10-01  5 entries`, '  2 edits, 1 read  /work/app/src/store.ts', '  1 edit           /work/app/tests/store.spec.ts'])
+  expect(out.trimEnd().split('\n')).toEqual([`${A}  app  2026-10-01  6 entries`, '  2 edits, 1 read  /work/app/src/store.ts', '  1 edit           /work/app/tests/store.spec.ts'])
   expect((await run(['files', 'zzzz'])).code).toBe(1)
 })
 
@@ -118,11 +118,11 @@ test('a changed setting reads the transcripts again for files and edits, and lea
   expect((await run(['blame', 'src/store.ts'])).out).toContain('aaaa1111  2 edits')
   expect((await run(['blame', 'src/store.ts', '--reads'])).out).not.toContain('bbbb2222')
   const after = (await run(['stats'])).out
-  expect(before).toContain('kinds     assistant 1, user 3')
-  expect(after).toContain('kinds     assistant 1, edit 3, user 3')
+  expect(before).toContain('kinds     assistant 1, call 5, user 3')
+  expect(after).toContain('kinds     assistant 1, call 2, edit 3, user 3')
   fileTools = ''
   await index()
-  expect((await run(['stats'])).out).toContain('kinds     assistant 1, user 3')
+  expect((await run(['stats'])).out).toContain('kinds     assistant 1, call 5, user 3')
   expect(after).toContain('files     3')
 })
 

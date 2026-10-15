@@ -1,4 +1,6 @@
 import { chunksOf } from '../core/text/chunk'
+import { bulkOfRow } from '../core/transcript/bulk'
+import type { Calls } from '../core/transcript/bulk'
 import { entriesOfRow, rowOf, titleOf } from '../core/transcript/entries'
 import { editsOfRow, fileToolsOf, touchesOfRow } from '../core/transcript/touches'
 import type { FileTools } from '../core/transcript/touches'
@@ -61,20 +63,40 @@ export const indexAll = async (store: Store, options: IndexOptions): Promise<Ind
   return report
 }
 
-// Reads again, for files and edits only, the part of each transcript that was read under another file-tools
-// setting. The other entries and their vectors are not touched.
+// Reads again, for files, edits, calls and results only, the part of each transcript that was read under another
+// file-tools setting. The other entries and their vectors are not touched. Calls and results are stored as they
+// are read and only their keys held, so a long transcript's tool output is never all in memory at once.
 const rereadFileRecords = async (store: Store, files: readonly TranscriptFile[], isFileTool: FileTools): Promise<void> => {
   for (const file of files) {
     const state = store.fileState(file.path)
     if (state === null || state.offset === 0) continue
     const touches = []
     const edits = []
+    const keys = new Set<string>()
+    const ids = new Set<number>()
+    const calls: Calls = new Map()
     for await (const batch of newLines(file.path, 0, state.offset)) {
       const rows = batch.lines.map(rowOf)
       touches.push(...rows.flatMap(row => touchesOfRow(row, isFileTool)))
       edits.push(...rows.flatMap(row => editsOfRow(row, isFileTool)))
+      const later = rows.flatMap(row => bulkOfRow(row, calls, isFileTool)).filter(e => e.kind !== 'summary')
+      for (const e of later) if (e.key !== undefined) keys.add(e.key)
+      for (const id of store.addLater(file.path, later)) ids.add(id)
     }
-    store.replaceFileRecords(file.path, touches, edits)
+    store.replaceFileRecords(file.path, touches, edits, { keys, ids })
+  }
+}
+
+// Reads again the part of each transcript that was read before calls, results and summaries were read, for those
+// alone. Every entry has a key, so a run that stopped halfway leaves nothing twice.
+const readLater = async (store: Store, files: readonly TranscriptFile[], isFileTool: FileTools): Promise<void> => {
+  for (const file of files) {
+    const state = store.fileState(file.path)
+    if (state === null || state.offset === 0) continue
+    const calls: Calls = new Map()
+    for await (const batch of newLines(file.path, 0, state.offset)) {
+      store.addLater(file.path, batch.lines.map(rowOf).flatMap(row => bulkOfRow(row, calls, isFileTool)))
+    }
   }
 }
 
@@ -87,6 +109,10 @@ const readTranscripts = async (store: Store, options: IndexOptions, report: Inde
     await rereadFileRecords(store, files, isFileTool)
     store.fileTools = setting
   }
+  if (!store.laterRead) {
+    await readLater(store, files, isFileTool)
+    store.laterRead = true
+  }
   await readJobs(store, jobs, isFileTool, options.onProgress, report)
 }
 
@@ -96,12 +122,13 @@ const readJobs = async (store: Store, jobs: readonly Job[], isFileTool: FileTool
   for (const { file, from } of jobs) {
     report.files++
     let pos = from
+    const calls: Calls = from === 0 ? new Map() : store.openCalls(file.path)
     for await (const batch of newLines(file.path, from, file.size)) {
       const rows = batch.lines.map(rowOf)
-      const entries = rows.flatMap(row => [...entriesOfRow(row), ...editsOfRow(row, isFileTool)])
+      const entries = rows.flatMap(row => [...entriesOfRow(row), ...editsOfRow(row, isFileTool), ...bulkOfRow(row, calls, isFileTool)])
       const touches = rows.flatMap(row => touchesOfRow(row, isFileTool))
       const titles = rows.flatMap(row => titleOf(row) ?? [])
-      store.ingest(file.path, entries, { size: file.size, offset: batch.end }, touches, titles)
+      store.ingest(file.path, entries, { size: file.size, offset: batch.end }, touches, titles, calls)
       report.entries += entries.length
       done += batch.end - pos
       pos = batch.end
@@ -121,8 +148,7 @@ export type RefreshOptions = {
 const REFRESH_EMBED_MS = 2500
 
 // Reads the new lines of one session's transcripts, and of its sub-agents', then embeds new entries while
-// time is left. It runs while a prompt waits, so vectors of another model stay as they are and the compact
-// copy of the vectors is not rebuilt: searches scan the vectors themselves until a full run.
+// time is left. It runs while a prompt waits, so vectors of another model stay as they are until a full run.
 export const refreshSession = async (store: Store, options: RefreshOptions): Promise<IndexReport> => {
   const report: IndexReport = { files: 0, entries: 0, chunks: 0, embeddingError: null }
   const jobs = jobsFor(store, await sessionTranscripts(options.projectsRoot, options.session))
@@ -169,7 +195,5 @@ const embedPending = async (store: Store, embedder: Embedder, options: IndexOpti
   } catch (error) {
     if (!(error instanceof EmbeddingUnavailableError)) throw error
     report.embeddingError = error.message
-  } finally {
-    store.compactVectors()
   }
 }

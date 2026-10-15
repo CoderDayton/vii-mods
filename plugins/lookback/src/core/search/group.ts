@@ -1,4 +1,4 @@
-import { CODE_KINDS } from '../types'
+import { BULK_KINDS, CODE_KINDS } from '../types'
 import type { EntryKind, Ranked, StoredEntry } from '../types'
 import { DEFAULT_TUNING } from './tuning'
 import type { Tuning } from './tuning'
@@ -60,7 +60,7 @@ export const names = (terms: readonly string[], project: string): boolean => {
 
 export const newestFirst = (hits: readonly SessionHit[]): SessionHit[] => [...hits].sort((a, b) => b.ts - a.ts)
 
-const isCode = (entry: HitEntry): boolean => CODE_KINDS.includes(entry.kind)
+const isCode = (entry: HitEntry): boolean => CODE_KINDS.includes(entry.kind) || BULK_KINDS.includes(entry.kind)
 
 // The entries of a session to show, best first and once each: a failure that was retried leaves the same text
 // many times. A session where something said matched shows one line of code at most, so that edits of one

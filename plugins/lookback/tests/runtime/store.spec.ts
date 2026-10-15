@@ -1,3 +1,4 @@
+import { getExtensionPath } from '@sqliteai/sqlite-vector'
 import { Database } from 'bun:sqlite'
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -211,34 +212,59 @@ test('a vector search drops entries beyond the distance cut-off', () => {
   expect((store.semantic([1, 0], 10, {}, 0.5)).map(h => h.id)).toEqual([near!])
 })
 
-test('vectors are found the same before and after the compact index is built, and so is one added later', () => {
+test('a vector is stored as one signed byte per value, its largest value scaled to 127', () => {
   store.useVectors({ model: 'm', dimension: 3 })
-  const [a, b, c] = store.addEntries([entry('alpha'), entry('beta'), entry('gamma')])
+  const [a] = store.addEntries([entry('alpha')])
+  store.addChunks([{ entry: a!, seq: 0, vector: [0.5, -0.2, 0] }])
+  const raw = new Database(path, { readonly: true })
+  const { embedding } = raw.query('select embedding from chunks').get() as { embedding: Uint8Array }
+  raw.close()
+  expect([...new Int8Array(embedding.buffer, embedding.byteOffset, embedding.byteLength)]).toEqual([127, -51, 0])
+})
+
+test('a vector search finds a vector as soon as it is stored, and never one whose entry was removed', () => {
+  store.useVectors({ model: 'm', dimension: 3 })
+  const [a, b, c] = store.addEntries([entry('alpha'), entry('beta', { session: 'gone' }), entry('gamma')])
   store.addChunks([
     { entry: a!, seq: 0, vector: [1, 0, 0] },
     { entry: b!, seq: 0, vector: [0, 1, 0] },
   ])
-  const nearest = (): number[] => store.semantic([0.1, 0.1, 1], 10, {}, 2).map(h => h.id)
-  const before = nearest()
-  store.compactVectors()
-  expect(nearest()).toEqual(before)
-
+  const query = [0.1, 0.1, 1]
+  const nearest = (): number[] => store.semantic(query, 10, {}, 2).map(h => h.id)
+  expect(nearest()).not.toContain(c!)
   store.addChunks([{ entry: c!, seq: 0, vector: [0, 0, 1] }])
   expect(nearest()[0]).toBe(c!)
-  store.compactVectors()
-  expect(nearest()[0]).toBe(c!)
+  store.dropSession('gone')
+  expect(nearest()).toEqual([c!, a!])
 })
 
-test('a vector search does not return an entry that was removed after the compact index was built', () => {
-  store.useVectors({ model: 'm', dimension: 2 })
-  const [a, b] = store.addEntries([entry('keep', { session: 'keep' }), entry('drop', { session: 'gone' })])
-  store.addChunks([
-    { entry: a!, seq: 0, vector: [1, 0] },
-    { entry: b!, seq: 0, vector: [0, 1] },
-  ])
-  store.compactVectors()
-  store.dropSession('gone')
-  expect(store.semantic([0, 1], 10, {}, 2).map(h => h.id)).toEqual([a!])
+test('a vector search gives the same entries when the nearest passages settle it as when every passage is read', () => {
+  store.useVectors({ model: 'm', dimension: 3 })
+  const kinds = ['user', 'assistant', 'cmd', 'edit', 'result', 'call', 'thinking'] as const
+  const ids = store.addEntries(Array.from({ length: 40 }, (_, i) => entry(`entry ${i}`, { kind: kinds[i % kinds.length], session: `s${i % 5}`, project: i % 4 === 0 ? '/work/rare' : '/work/app' })))
+  store.addChunks(ids.flatMap((id, i) => [
+    { entry: id, seq: 0, vector: [1, Math.sin(i), Math.cos(i * 1.7)] },
+    ...(i % 3 === 0 ? [{ entry: id, seq: 1, vector: [Math.cos(i), 1, Math.sin(i * 0.3)] }] : []),
+  ]))
+  store.close()
+  const whole = Store.open(path, { readOnly: true })
+  const few = Store.open(path, { readOnly: true, nearestFirst: 4 })
+  const query = [1, 0.3, -0.2]
+  const cases: [number, Filter, (readonly ('cmd' | 'edit' | 'call' | 'result')[])[]][] = [
+    [3, {}, []],
+    [2, {}, [['cmd', 'edit'], ['call', 'result']]],
+    [3, { kinds: ['edit'] }, []],
+    [2, { project: 'rare' }, [['cmd', 'edit']]],
+    [5, { excludeSession: 's1', since: 0 }, [['call', 'result']]],
+  ]
+  for (const [limit, filter, apart] of cases) {
+    const all = whole.semantic(query, limit, filter, 2, apart)
+    expect(all.length).toBeGreaterThan(0)
+    expect(few.semantic(query, limit, filter, 2, apart)).toEqual(all)
+  }
+  whole.close()
+  few.close()
+  store = Store.open(path)
 })
 
 test('a vector search honours the filters', () => {
@@ -252,7 +278,7 @@ test('a vector search honours the filters', () => {
   expect(store.semantic([1, 0], 10, { excludeSession: 'a' }).map(h => h.id)).toEqual([b!])
 })
 
-test('a vector search can rank some kinds apart, each side up to the limit, in one list', () => {
+test('a vector search can rank groups of kinds apart, each side up to the limit, in one list', () => {
   store.useVectors({ model: 'm', dimension: 2 })
   const ids = store.addEntries([
     entry('cmd one', { kind: 'cmd' }),
@@ -261,10 +287,14 @@ test('a vector search can rank some kinds apart, each side up to the limit, in o
     entry('said four'),
     entry('said five', { kind: 'assistant' }),
     entry('said six'),
+    entry('result seven', { kind: 'result' }),
+    entry('call eight', { kind: 'call' }),
+    entry('result nine', { kind: 'result' }),
   ])
   store.addChunks(ids.map((id, i) => ({ entry: id, seq: 0, vector: [1, 0.01 * (i + 1)] })))
   expect(store.semantic([1, 0], 2, {}, 2).map(h => h.id)).toEqual([ids[0]!, ids[1]!])
-  expect(store.semantic([1, 0], 2, {}, 2, ['cmd', 'edit']).map(h => h.id)).toEqual([ids[0]!, ids[1]!, ids[3]!, ids[4]!])
+  expect(store.semantic([1, 0], 2, {}, 2, [['cmd', 'edit']]).map(h => h.id)).toEqual([ids[0]!, ids[1]!, ids[3]!, ids[4]!])
+  expect(store.semantic([1, 0], 1, {}, 2, [['cmd', 'edit'], ['call', 'result']]).map(h => h.id)).toEqual([ids[0]!, ids[3]!, ids[6]!])
 })
 
 test('a vector search of another length than the stored vectors finds nothing', () => {
@@ -395,7 +425,7 @@ test('an index of the version before is brought up in place: its entries stay, a
   store.fileTools = 'mcp__files'
   store.close()
   const old = new Database(path)
-  old.exec("drop index entries_key; alter table entries drop column key; drop table titles; update meta set value = '8' where key = 'schema'")
+  old.exec("drop index entries_key; alter table entries drop column key; drop table titles; alter table files drop column calls; update meta set value = '8' where key = 'schema'")
   old.close()
 
   store = Store.open(path)
@@ -405,6 +435,35 @@ test('an index of the version before is brought up in place: its entries stay, a
   expect(store.ingest('/t/new.jsonl', [entry('a', { key: 'u1:0' }), entry('a', { key: 'u1:0' })], { size: 1, offset: 1 })).toHaveLength(1)
   store.setTitles([{ session: 's1', title: 'Named', isCustom: false }])
   expect(store.titles(['s1']).get('s1')).toBe('Named')
+})
+
+test('an index of 32-bit vectors is brought up to bytes in place: the order they give stays, its 8-bit copy goes, and no file is read again', () => {
+  store.useVectors({ model: 'm', dimension: 3 })
+  const [a, b] = store.addEntries([entry('alpha'), entry('beta')])
+  store.addChunks([
+    { entry: a!, seq: 0, vector: [0, 0, 1] },
+    { entry: b!, seq: 0, vector: [1, 0, 0] },
+  ])
+  store.setFileState('/t/kept.jsonl', { size: 10, offset: 10 })
+  store.close()
+  const old = new Database(path)
+  old.loadExtension(getExtensionPath())
+  const floats = (v: number[]): Uint8Array => new Uint8Array(Float32Array.from(v).buffer)
+  old.query('update chunks set embedding = ? where entry = ?').run(floats([0.9, 0.1, 0.2]), a!)
+  old.query('update chunks set embedding = ? where entry = ?').run(floats([0.1, 0.8, 0.3]), b!)
+  old.query("select vector_init('chunks', 'embedding', 'dimension=3,type=FLOAT32,distance=COSINE')").get()
+  old.query("select vector_quantize('chunks', 'embedding', 'qtype=INT8')").get()
+  old.exec("alter table files drop column calls; update meta set value = '9' where key = 'schema'; insert or replace into meta (key, value) values ('compact', '1')")
+  old.close()
+
+  store = Store.open(path)
+  expect(store.fileState('/t/kept.jsonl')).toEqual({ size: 10, offset: 10 })
+  expect(store.semantic([1, 0, 0], 10, {}, 2).map(h => h.id)).toEqual([a!, b!])
+  const raw = new Database(path, { readonly: true })
+  expect((raw.query('select length(embedding) as n from chunks').all() as { n: number }[]).map(r => r.n)).toEqual([3, 3])
+  expect(raw.query("select 1 from sqlite_master where name like 'vector0_%'").get()).toBeNull()
+  expect(raw.query("select 1 from meta where key = 'compact'").get()).toBeNull()
+  raw.close()
 })
 
 test('an index of a version with no path to this one is emptied', () => {

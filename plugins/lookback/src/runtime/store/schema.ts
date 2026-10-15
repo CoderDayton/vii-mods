@@ -1,11 +1,20 @@
-// Bump when a table below changes shape, and add the step from the version before to MIGRATIONS.
-export const SCHEMA_VERSION = '9'
+import type { Database } from 'bun:sqlite'
+
+import { floatsToBytes } from './vectors'
+
+// Bump when a table below changes shape or what a column holds, with a step in MIGRATIONS.
+export const SCHEMA_VERSION = '11'
+
+// `reread` makes the next index run read every transcript again, for a step after which more is read from them.
+export type Migration = { change: string | ((db: Database) => void); reread: boolean }
 
 // What brings an index of each older version one version up, before SCHEMA runs. Claude Code deletes old
 // transcripts, so an index holds sessions that cannot be read again: a step keeps them. An index of a version
 // with no step here is emptied and rebuilt from the transcripts still on disk.
-export const MIGRATIONS: Readonly<Record<string, string>> = {
-  '8': "alter table entries add column key text not null default ''",
+export const MIGRATIONS: Readonly<Record<string, Migration>> = {
+  '8': { change: "alter table entries add column key text not null default ''", reread: true },
+  '9': { change: floatsToBytes, reread: false },
+  '10': { change: "alter table files add column calls text not null default '{}'", reread: false },
 }
 
 // Stems words ("fixing" finds "fixed") and splits on punctuation, so a path or a dotted name is a phrase.
@@ -24,7 +33,8 @@ export const SCHEMA = `
   create table if not exists files (
     path text primary key,
     size integer not null,
-    offset integer not null
+    offset integer not null,
+    calls text not null default '{}'
   ) without rowid;
 
   create table if not exists forgotten (

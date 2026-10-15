@@ -25,7 +25,7 @@ export const DEFAULT_TUNING: Tuning = {
   minBalance: 0.15,
   maxBalance: 0.85,
   meaningFloor: 0.5,
-  kindWeight: { user: 1.15, error: 1.15, assistant: 1, thinking: 0.9, cmd: CODE_WEIGHT, edit: CODE_WEIGHT },
+  kindWeight: { user: 1.15, error: 1.15, assistant: 1, summary: 0.95, thinking: 0.9, cmd: CODE_WEIGHT, edit: CODE_WEIGHT, call: 0.7, result: 0.6 },
   subAgentWeight: 0.9,
   minShare: 0.4,
   projectBoost: 1.3,

@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { writeFileSync } from 'node:fs'
+import { statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { entriesOf } from '../../src/core/transcript/entries'
 import { indexAll } from '../../src/runtime/indexer'
 import type { Progress } from '../../src/runtime/indexer'
+import { searchPast } from '../../src/runtime/search'
 import { Store } from '../../src/runtime/store/store'
-import { FakeEmbedder, Projects, assistantRow, commandRow, tempDir, userRow } from './helpers'
+import { FakeEmbedder, Projects, assistantRow, commandRow, resultRow, summaryRow, tempDir, toolRow, userRow } from './helpers'
 
 let projects: Projects
 let tmp: ReturnType<typeof tempDir>
@@ -31,6 +33,54 @@ test('new transcripts are read into entries, and the report says how many', asyn
   const report = await run(null)
   expect(report).toMatchObject({ files: 1, entries: 2, embeddingError: null })
   expect((store.stats()).entries).toBe(2)
+})
+
+const pool = 'The pool hands out sockets and queues a caller when none is free, then times out.'
+
+const withTools = (): string[] => [
+  userRow('How does the connection pool behave when it is empty?', { session: 's1' }),
+  toolRow('mcp__searxng__web_read', { url: 'https://example.com/pool' }, { session: 's1', uuid: 'a1' }),
+  resultRow(pool, { session: 's1', uuid: 'a2' }),
+  summaryRow('The session read about the pool.', { session: 's1', uuid: 'a3' }),
+]
+
+test('the calls of other tools, what they returned and a compaction summary are read, the result headed by its call', async () => {
+  projects.write('proj', 's1', withTools())
+  await run(null)
+  expect(store.stats().byKind).toEqual({ user: 1, call: 1, result: 1, summary: 1 })
+  const [hit] = (await searchPast(store, null, 'sockets queues caller times out', { now: Date.now(), kinds: ['result'] })).hits
+  expect(hit?.entries[0]?.text).toBe(`mcp__searxng__web_read https://example.com/pool\n${pool}`)
+})
+
+test('a result read in a later run than its call is still headed by it, and an edit read so is still left out', async () => {
+  const path = projects.write('proj', 's1', [
+    userRow('How does the connection pool behave when it is empty?', { session: 's1' }),
+    toolRow('mcp__searxng__web_read', { url: 'https://example.com/pool' }, { session: 's1', uuid: 'a1' }),
+  ])
+  await run(null)
+  projects.append(path, [resultRow(pool, { session: 's1', uuid: 'a2' })])
+  await run(null)
+  projects.append(path, [
+    toolRow('Edit', { file_path: '/work/app/pool.ts', old_string: 'a', new_string: 'b' }, { session: 's1', uuid: 'a3' }),
+  ])
+  await run(null)
+  projects.append(path, [resultRow('The file /work/app/pool.ts has been updated successfully, and here is a snippet.', { session: 's1', uuid: 'a4' })])
+  await run(null)
+  const [hit] = (await searchPast(store, null, 'sockets queues caller times out', { now: Date.now(), kinds: ['result'] })).hits
+  expect(hit?.entries.map(e => e.text)).toEqual([`mcp__searxng__web_read https://example.com/pool\n${pool}`])
+  expect(store.stats().byKind.result).toBe(1)
+})
+
+test('transcripts read before these kinds were read give them once, and the entries they already had stay', async () => {
+  const lines = withTools()
+  const path = projects.write('proj', 's1', lines)
+  const before = lines.flatMap(line => entriesOf(line))
+  store.ingest(path, before, { size: statSync(path).size, offset: statSync(path).size })
+  expect(store.stats().byKind).toEqual({ user: 1 })
+  await run(null)
+  expect(store.stats().byKind).toEqual({ user: 1, call: 1, result: 1, summary: 1 })
+  await run(null)
+  expect(store.stats().entries).toBe(4)
 })
 
 test('a second run with nothing new reads nothing', async () => {
