@@ -130,6 +130,15 @@ Sound for Claude Code. Your typing clicks on a mechanical switch, a chime plays 
 - **Evenly loud.** Each clip is leveled as it loads, so no switch or chime jumps out.
 - `/cues` shows the state · `/cues <switch>` · `/cues volume keys 40` · `/cues volume chimes 70` · `/cues reply bell` / `notes` · `/cues off` / `on`.
 
+List cues first in `enabledPlugins` in `~/.claude/settings.json`. Plugins run in that order, so a plugin listed before cues that does work on a sent prompt, such as lookback's recall, holds back the send chime until it is done.
+
+```json
+"enabledPlugins": {
+  "cues@vii-mods": true,
+  "lookback@vii-mods": true
+}
+```
+
 Needs Linux with PipeWire or ALSA, and [Bun](https://bun.sh). Key recordings are from [kbsim](https://github.com/tplai/kbsim) by Thomas Lai (MIT), see [`sounds/keys/LICENSE`](plugins/cues/sounds/keys/LICENSE).
 
 [Full README](plugins/cues/README.md)
