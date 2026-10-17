@@ -56,8 +56,8 @@ test('kinds narrow a search or a session read', () => {
 })
 
 test('a kind that does not exist is refused, with the ones that do', () => {
-  expect(requestOf({ query: 'x', kind: ['note'] })).toEqual({ error: '"kind" must be a list of: user, assistant, thinking, error, cmd, edit, summary, call, result' })
-  expect(requestOf({ query: 'x', kind: 'user' })).toEqual({ error: '"kind" must be a list of: user, assistant, thinking, error, cmd, edit, summary, call, result' })
+  expect(requestOf({ query: 'x', kind: ['note'] })).toEqual({ error: '"kind" must be a list of: user, assistant, thinking, error, cmd, edit, summary, call, result, image' })
+  expect(requestOf({ query: 'x', kind: 'user' })).toEqual({ error: '"kind" must be a list of: user, assistant, thinking, error, cmd, edit, summary, call, result, image' })
 })
 
 test('an offset past the last entry of a session says how many there are', () => {

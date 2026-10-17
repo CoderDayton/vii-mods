@@ -1,21 +1,21 @@
 import type { Database } from 'bun:sqlite'
-import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, rmSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 
 import { REDACTED_MARK } from '../../core/text/redact'
 import type { Called, Calls } from '../../core/transcript/bulk'
 import { ENTRY_KINDS } from '../../core/transcript/entries'
 import type { SessionTitle } from '../../core/transcript/entries'
-import type { ChunkVector, CommandUse, Entry, EntryKind, FileUse, Filter, ForgottenSession, Ranked, RecentSession, SessionSummary, StoreStats, StoredEntry, Touch, Turn } from '../../core/types'
+import type { ChunkVector, CommandUse, Entry, EntryKind, FileUse, Filter, ForgottenSession, KeptPaste, Ranked, RecentSession, SessionSummary, StoreStats, StoredEntry, Touch, Turn } from '../../core/types'
 import { MIN_EMBEDDED_CHARS } from '../../core/types'
 import { commandQuery } from './commands'
 import { acquireWriteLock, openDatabase } from './database'
 import type { Params } from './database'
 import { StoreMissingError } from './errors'
-import { clauseOf } from './filters'
+import { clauseOf, kindList } from './filters'
 import type { Clause } from './filters'
-import { lexicalQuery, matchExpression } from './lexical'
-import { MIGRATIONS, SCHEMA, SCHEMA_VERSION, TABLES } from './schema'
+import { lexicalApartQuery, lexicalQuery, matchExpression } from './lexical'
+import { MIGRATIONS, SCHEMA, SCHEMA_VERSION, TABLES, searchedText } from './schema'
 import type { Migration } from './schema'
 import { encodeVector, initVectors, scanOf } from './vectors'
 import type { VectorSpace } from './vectors'
@@ -23,12 +23,14 @@ import type { VectorSpace } from './vectors'
 export type { VectorSpace }
 
 // `nearestFirst` is how many passages the first pass of a vector search reads; tests set it low.
-export type OpenOptions = { readOnly?: boolean; nearestFirst?: number }
+export type OpenOptions = { readOnly?: boolean; nearestFirst?: number; directMax?: number }
 
 // About 60 ms over 300,000 passages. Large enough that a search with no narrow filter is settled by it.
 const NEAREST_FIRST = 2000
+const DIRECT_MAX = 6000
 
 const OPEN_CALLS = 64
+export const CAPTION_TRIES = 3
 
 export type FileState = { size: number; offset: number }
 
@@ -44,8 +46,6 @@ const withParent = <T extends { parent: string }>(row: T): Omit<T, 'parent'> & {
   const { parent, ...rest } = row
   return parent === '' ? rest : { ...rest, parent }
 }
-
-const kindList = (kinds: readonly EntryKind[]): string => kinds.map(k => `'${k}'`).join(', ')
 
 const atLeastOne = (limit: number): number => Math.max(1, Math.trunc(limit))
 
@@ -81,6 +81,7 @@ export class Store {
     readonly path: string,
     readonly readOnly: boolean,
     private readonly nearestFirst: number,
+    private readonly directMax: number,
   ) {}
 
   // Throws StoreMissingError when a reader finds no usable index, and StoreBusyError when a writer finds
@@ -92,7 +93,7 @@ export class Store {
     let db: Database | null = null
     try {
       db = openDatabase(path, readOnly)
-      const store = new Store(db, lock, path, readOnly, options.nearestFirst ?? NEAREST_FIRST)
+      const store = new Store(db, lock, path, readOnly, options.nearestFirst ?? NEAREST_FIRST, options.directMax ?? DIRECT_MAX)
       store.load()
       return store
     } catch (error) {
@@ -236,13 +237,18 @@ export class Store {
   // under it. Claude Code titles a session a person typed in, so `titledOnly` leaves out the ones another
   // session drove.
   recent(project: string, limit: number, exclude = '', titledOnly = false, exact = false): RecentSession[] {
-    const inFolder = exact ? 'e.project = $project' : "(e.project = $project or substr(e.project, 1, length($project) + 1) = $project || '/')"
+    const inFolder =
+      project === ''
+        ? ''
+        : exact
+          ? 'and e.project = $project'
+          : "and e.project >= $project and e.project < $project || '0' and (e.project = $project or substr(e.project, 1, length($project) + 1) = $project || '/')"
     return this.all<RecentSession>(
       `select e.session, min(e.project) as project, max(e.ts) as last, t.title,
          (select u.text from entries u where u.session = e.session and u.kind = 'user' order by u.ts, u.id limit 1) as asked,
          (select a.text from entries a where a.session = e.session and a.kind = 'assistant' order by a.ts desc, a.id desc limit 1) as ended
        from entries e left join titles t on t.session = e.session
-       where e.parent = '' and e.session <> $exclude ${titledOnly ? 'and t.title is not null' : ''} and ($project = '' or ${inFolder})
+       where e.parent = '' and e.session <> $exclude ${titledOnly ? 'and t.title is not null' : ''} ${inFolder}
        group by e.session order by last desc, e.session limit ${atLeastOne(limit)}`,
       { project, exclude },
     )
@@ -262,12 +268,13 @@ export class Store {
   // Stores the entries read from a transcript and how far it was read, in one transaction: after a crash the
   // position never runs ahead of the entries, and no line is stored twice. What belongs to a forgotten session
   // is left out.
-  ingest(path: string, entries: readonly Entry[], state: FileState, touches: readonly Touch[] = [], titles: readonly SessionTitle[] = [], calls?: Calls): number[] {
+  ingest(path: string, entries: readonly Entry[], state: FileState, touches: readonly Touch[] = [], titles: readonly SessionTitle[] = [], calls?: Calls, pastes: readonly KeptPaste[] = []): number[] {
     this.assertWritable()
     const kept = this.keeper()
     return this.db.transaction(() => {
       const ids = this.addEntries(entries.filter(kept), path)
       this.addTouches(touches.filter(kept), path)
+      this.addPastes(path, pastes)
       this.setTitles(titles)
       this.setFileState(path, state, calls)
       return ids
@@ -284,7 +291,7 @@ export class Store {
     })()
   }
 
-  private keeper(): (record: { session: string; parent?: string }) => boolean {
+  keeper(): (record: { session: string; parent?: string }) => boolean {
     const gone = new Set(this.forgotten().map(f => f.session))
     return record => !gone.has(record.session) && !(record.parent !== undefined && gone.has(record.parent))
   }
@@ -471,6 +478,7 @@ export class Store {
       this.dropWhere('parent', session)
       this.run('delete from titles where session = $session', { session })
     })()
+    this.sweepImages()
     return found.n
   }
 
@@ -512,7 +520,83 @@ export class Store {
     this.db.transaction(() => {
       this.run(`delete from entries where ${column} = $value`, { value })
       this.run(`delete from touches where ${column} = $value`, { value })
+      this.run(`delete from pastes where ${column} = $value`, { value })
     })()
+  }
+
+  get imagesDir(): string {
+    return join(dirname(this.path), 'images')
+  }
+
+  // Whether every transcript read so far was read for pasted images too, and new lines are.
+  get imagesRead(): boolean {
+    return this.meta('images') === '1'
+  }
+
+  set imagesRead(done: boolean) {
+    this.assertWritable()
+    this.setMeta('images', done ? '1' : '0')
+  }
+
+  // Records pasted images to caption. One that already has its entry, or belongs to a forgotten session, is left out.
+  addPastes(source: string, pastes: readonly KeptPaste[]): void {
+    if (pastes.length === 0) return
+    this.assertWritable()
+    const kept = this.keeper()
+    const image = this.db.query('insert into images (sha, file) values ($sha, $file) on conflict (sha) do nothing')
+    const paste = this.db.query(
+      `insert into pastes (key, sha, source, session, parent, project, ts) select $key, $sha, $source, $session, $parent, $project, $ts
+       where not exists (select 1 from entries where key = $key and key <> '') on conflict (key) do nothing`,
+    )
+    this.db.transaction(() => {
+      for (const p of pastes.filter(kept)) {
+        image.run({ sha: p.sha, file: p.file })
+        paste.run({ key: p.key, sha: p.sha, source, session: p.session, parent: p.parent ?? '', project: p.project, ts: Math.trunc(p.ts) })
+      }
+    })()
+  }
+
+  uncaptioned(): { sha: string; file: string }[] {
+    return this.all(`select sha, file from images i where caption is null and tries < ${CAPTION_TRIES} and exists (select 1 from pastes p where p.sha = i.sha) order by tries, sha`)
+  }
+
+  setCaption(sha: string, caption: string): void {
+    this.assertWritable()
+    this.run('update images set caption = $caption where sha = $sha', { sha, caption })
+  }
+
+  captionFailed(sha: string): void {
+    this.assertWritable()
+    this.run('update images set tries = tries + 1 where sha = $sha', { sha })
+  }
+
+  // An image entry's text is the image's path, a newline, then the caption; format.ts and sweepImages read it so.
+  placeCaptions(): number {
+    this.assertWritable()
+    const ready = this.all<KeptPaste & { parent: string; caption: string; source: string }>(
+      'select p.key, p.sha, i.file, p.source, p.session, p.parent, p.project, p.ts, i.caption from pastes p join images i on i.sha = p.sha where i.caption is not null',
+    )
+    if (ready.length === 0) return 0
+    const dir = this.imagesDir
+    return this.db.transaction(() => {
+      let added = 0
+      for (const r of ready) {
+        if (r.caption !== '') added += this.addEntries([{ kind: 'image', text: `${join(dir, r.file)}\n${r.caption}`, ts: r.ts, session: r.session, ...(r.parent === '' ? {} : { parent: r.parent }), project: r.project, key: r.key }], r.source).length
+        this.run('delete from pastes where key = $key', { key: r.key })
+      }
+      return added
+    })()
+  }
+
+  // An image file is shared by every paste of the same bytes, so it goes only when none names it.
+  private sweepImages(): void {
+    const named = new Set(this.all<{ path: string }>("select substr(text, 1, instr(text, char(10)) - 1) as path from entries where kind = 'image'").map(e => basename(e.path)))
+    const dir = this.imagesDir
+    for (const image of this.all<{ sha: string; file: string }>('select sha, file from images i where not exists (select 1 from pastes p where p.sha = i.sha)')) {
+      if (named.has(image.file)) continue
+      rmSync(join(dir, image.file), { force: true })
+      this.run('delete from images where sha = $sha', { sha: image.sha })
+    }
   }
 
   // Declares the model whose vectors the index holds. A different model or length empties the vectors.
@@ -522,6 +606,7 @@ export class Store {
     const hadVectors = this.space !== null
     this.db.transaction(() => {
       this.run('delete from chunks')
+      this.setMeta('settled', '0')
       this.setMeta('model', space.model)
       this.setMeta('dimension', String(space.dimension))
     })()
@@ -540,16 +625,26 @@ export class Store {
     return this.space
   }
 
+  private get settled(): number {
+    return Number(this.meta('settled') ?? 0)
+  }
+
   private get awaiting(): string {
     return `from entries e
-      where length(text) >= ${MIN_EMBEDDED_CHARS}
-        and not exists (select 1 from chunks c where c.entry = e.id)`
+      where e.id > ${this.settled}
+        and not exists (select 1 from chunks c where c.entry = e.id)
+        and length(${searchedText('e')}) >= ${MIN_EMBEDDED_CHARS}`
   }
 
   // Entries that should have a vector and do not yet, oldest first.
   pending(limit: number, session = ''): { id: number; text: string }[] {
     const only = session === '' ? '' : 'and (e.session = $session or e.parent = $session)'
-    return this.all(`select id, text ${this.awaiting} ${only} order by id limit ${atLeastOne(limit)}`, session === '' ? {} : { session })
+    const rows = this.all<{ id: number; text: string }>(`select id, ${searchedText('e')} as text ${this.awaiting} ${only} order by id limit ${atLeastOne(limit)}`, session === '' ? {} : { session })
+    if (session === '' && !this.readOnly) {
+      const settled = rows.length > 0 ? rows[0]!.id - 1 : (this.one<{ n: number }>('select coalesce(max(id), 0) as n from entries')?.n ?? 0)
+      if (settled > this.settled) this.setMeta('settled', String(settled))
+    }
+    return rows
   }
 
   countPending(): number {
@@ -588,6 +683,11 @@ export class Store {
     return query === null ? [] : this.all<Ranked>(query.sql, query.params)
   }
 
+  lexicalApart(terms: readonly string[], limit: number, filter: Filter, groups: readonly (readonly EntryKind[])[]): Ranked[] {
+    const query = lexicalApartQuery(terms, limit, filter, groups)
+    return query === null ? [] : this.all<Ranked>(query.sql, query.params)
+  }
+
   // The entries whose nearest passage is within `maxDistance` (cosine distance, 0 to 2) of the vector, nearest
   // first, with a score of one minus the distance. The groups of kinds in `apart` are ranked apart from the rest, and
   // each side gives up to `limit` entries.
@@ -604,6 +704,8 @@ export class Store {
     const side = apart.length === 0 ? '0' : `case ${apart.map((kinds, i) => `when e.kind in (${kindList(kinds)}) then ${i + 1}`).join(' ')} else 0 end`
     const kept = atLeastOne(limit)
     const query = encodeVector(vector)
+    const direct = this.directly(query, kept, filter, maxDistance, sideOf)
+    if (direct !== null) return direct
     const ranked = (where: Clause, scan: string, also = '', near?: string): Placed[] =>
       this.all<Placed>(
         `select id, dist, side, place from (
@@ -632,6 +734,46 @@ export class Store {
       rows = [...near.filter(r => !short.includes(r.side)), ...ranked(where, scanOf(), prefilter)]
     }
     return rows.sort((a, b) => a.dist - b.dist || b.id - a.id).map(r => ({ id: r.id, score: 1 - r.dist }))
+  }
+
+  private directly(query: Uint8Array, kept: number, filter: Filter, maxDistance: number, sideOf: (kind: EntryKind) => number): Ranked[] | null {
+    if (this.directMax <= 0 || filter.project === undefined || filter.project === '' || (filter.kinds?.length ?? 0) === 0) return null
+    const where = clauseOf(filter, 'e')
+    const rows = this.all<{ entry: number; kind: EntryKind; embedding: Uint8Array }>(
+      `select c.entry as entry, e.kind as kind, c.embedding as embedding from chunks c join entries e on e.id = c.entry where ${where.sql} limit ${this.directMax + 1}`,
+      where.params,
+    )
+    if (rows.length > this.directMax) return null
+    const q = new Int8Array(query.buffer, query.byteOffset, query.byteLength)
+    let qq = 0
+    for (let i = 0; i < q.length; i++) qq += q[i]! * q[i]!
+    const best = new Map<number, { dist: number; side: number }>()
+    for (const row of rows) {
+      if (row.embedding.byteLength !== q.length) continue
+      const x = new Int8Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength)
+      let dot = 0
+      let xx = 0
+      for (let i = 0; i < x.length; i++) {
+        dot += x[i]! * q[i]!
+        xx += x[i]! * x[i]!
+      }
+      if (xx === 0 || qq === 0) continue
+      const dist = 1 - dot / Math.sqrt(xx * qq)
+      if (dist > maxDistance) continue
+      const had = best.get(row.entry)
+      if (had === undefined || dist < had.dist) best.set(row.entry, { dist, side: sideOf(row.kind) })
+    }
+    const order = (a: { id: number; dist: number }, b: { id: number; dist: number }) => a.dist - b.dist || b.id - a.id
+    const bySide = new Map<number, { id: number; dist: number }[]>()
+    for (const [id, { dist, side }] of best) {
+      const list = bySide.get(side)
+      if (list === undefined) bySide.set(side, [{ id, dist }])
+      else list.push({ id, dist })
+    }
+    return [...bySide.values()]
+      .flatMap(list => list.sort(order).slice(0, kept))
+      .sort(order)
+      .map(r => ({ id: r.id, score: 1 - r.dist }))
   }
 
   // The nearest passages to a vector, as [rowid, distance], kept for the last vector asked until the index changes.

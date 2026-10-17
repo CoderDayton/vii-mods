@@ -81,6 +81,12 @@ const render = (hit: SessionHit, terms: readonly string[]): string => {
   const turns = new Map<number, HitEntry[]>()
   for (const entry of [...hit.entries].sort((a, b) => a.id - b.id)) turns.set(entry.turn ?? entry.id, [...(turns.get(entry.turn ?? entry.id) ?? []), entry])
 
+  // An image entry holds the image's path on its first line and its caption after it.
+  const shownEntry = (e: HitEntry): string[] => {
+    if (e.kind !== 'image') return [line(e.kind, snippetOf(e.text, terms, ENTRY_WIDTH))]
+    const cut = e.text.indexOf('\n')
+    return [line('image', snippetOf(e.text.slice(cut + 1), terms, ENTRY_WIDTH)), line('', e.text.slice(0, cut))]
+  }
   const files = hit.files === undefined || hit.files.length === 0 ? [] : [line('changed', hit.files.map(shortPath).join(', '))]
   const lines = [...turns.entries()]
     .sort(([a], [b]) => a - b)
@@ -88,7 +94,7 @@ const render = (hit: SessionHit, terms: readonly string[]): string => {
       const first = entries[0]
       return [
         ...around('asked', first?.asked, CONTEXT_WIDTH),
-        ...entries.map(e => line(e.kind, snippetOf(e.text, terms, ENTRY_WIDTH))),
+        ...entries.flatMap(shownEntry),
         ...around('ended', first?.ended, CONTEXT_WIDTH),
         ...around('reply', first?.reply, REPLY_WIDTH),
       ]

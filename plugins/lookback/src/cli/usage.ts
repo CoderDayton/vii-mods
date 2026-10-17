@@ -3,8 +3,9 @@ export const USAGE = `Usage: lookback <command> [options]
 Search your past Claude Code sessions by words and by meaning.
 
 Commands:
-  lookback index [--no-embed] [--quiet]
-      Read new transcript lines into the index, then embed them.
+  lookback index [--no-embed] [--quiet] [--wait]
+      Read new transcript lines into the index, then embed them. A run that
+      finds another one writing exits at once; with --wait it waits up to 60 s.
   lookback search <question...> [options]
       Find past sessions, listed newest first. Words about time in the
       question are read, not searched for: "yesterday", "last week",
@@ -54,11 +55,14 @@ Commands:
   lookback stats [--json]
       What the index holds.
   lookback doctor
-      Check the index, the transcripts and the embedding server.
+      Check the index, the transcripts, the embedding server and image captions.
 
 Settings come from the environment: LOOKBACK_PROJECTS, LOOKBACK_DB,
 LOOKBACK_EMBEDDING_URL, LOOKBACK_EMBEDDING_MODEL, LOOKBACK_EMBEDDING_KEY,
 LOOKBACK_FILE_TOOLS (MCP tools or servers whose calls name files, by commas),
+LOOKBACK_CAPTION_SERVER (a llama-server command that captions pasted images),
+LOOKBACK_CAPTION_MODEL, LOOKBACK_CAPTION_URL, LOOKBACK_CAPTION_KEY (a running
+server's vision model instead),
 LOOKBACK_SQLITE_LIB (a libsqlite3 to use in place of Bun's; macOS needs one).
 
 Exit codes: 0 ok, 1 failed, 2 bad usage, 3 no index yet.

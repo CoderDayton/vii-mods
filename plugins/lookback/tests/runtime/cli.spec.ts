@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { join } from 'node:path'
 
+import { index } from '../../src/cli/commands/index'
 import { main } from '../../src/cli/main'
+import { configFrom } from '../../src/runtime/config'
 import { Projects, assistantRow, tempDir, userRow } from './helpers'
 
 let projects: Projects
@@ -51,8 +53,27 @@ const run = async (argv: string[]) => {
 test('index reads the transcripts, and says the embedding server could not be reached', async () => {
   const { code, out, err } = await run(['index'])
   expect(code).toBe(0)
-  expect(out).toContain('3 entries')
+  expect(out).toContain('Read 2 transcripts')
+  expect(out).toContain('3 new entries')
   expect(err).toContain('embedding')
+})
+
+test('an index run with nothing new says the index is up to date', async () => {
+  await run(['index', '--no-embed'])
+  expect((await run(['index', '--no-embed'])).out).toBe('Nothing new: the index is up to date.\n')
+})
+
+test('index --wait waits for the run already writing, then reads what is left', async () => {
+  const writer = await holdIndex(join(tmp.path, 'index.sqlite'))
+  const timer = setTimeout(() => writer.release(), 300)
+  const { code, out, err } = await run(['index', '--no-embed', '--wait']).finally(() => {
+    clearTimeout(timer)
+    writer.release()
+  })
+  expect(code).toBe(0)
+  expect(err).not.toContain('already running')
+  expect(out).toContain('Waited for the index run already going.')
+  expect(out).toContain('3 new entries')
 })
 
 test('search finds a session by its words and names it', async () => {
@@ -145,4 +166,31 @@ test('doctor reports the index and the embedding server, and fails only on what 
   expect(out).toMatch(/warn/i)
   expect(out).toContain(`bun ${Bun.version}`)
   expect(out).toMatch(/sqlite 3\.\d+/)
+})
+
+test('the command line loads the OpenAI client only for a command that embeds or captions', async () => {
+  const main = join(import.meta.dir, '../../src/cli/main')
+  const script = `await import(${JSON.stringify(main)}); console.log(Object.keys(require.cache).filter(k => k.includes('/node_modules/openai/')).length)`
+  const child = Bun.spawn([process.execPath, '-e', script], { stdout: 'pipe', stderr: 'inherit' })
+  expect((await new Response(child.stdout).text()).trim()).toBe('0')
+})
+
+test('doctor finds a missing model file however its flag is written', async () => {
+  const out: string[] = []
+  const command = `${process.execPath} -m /no/such/model.gguf --mmproj=/no/such/mmproj.gguf --model=${process.execPath}`
+  await main(['doctor'], { env: { ...env(), LOOKBACK_CAPTION_SERVER: command }, stdout: t => out.push(t), stderr: () => {}, now: Date.now })
+  const line = out.join('').split('\n').find(l => l.includes('image captions')) ?? ''
+  expect(line).toContain('/no/such/model.gguf, /no/such/mmproj.gguf not found')
+})
+
+test('index --wait gives up on a run that holds the index too long, and says it is still going', async () => {
+  const writer = await holdIndex(join(tmp.path, 'index.sqlite'))
+  const err: string[] = []
+  try {
+    const io = { env: env(), stdout: () => {}, stderr: (t: string) => err.push(t), now: Date.now }
+    expect(await index(['--no-embed', '--wait'], io, configFrom(env()), 300)).toBe(0)
+  } finally {
+    writer.release()
+  }
+  expect(err.join('')).toContain('still running')
 })

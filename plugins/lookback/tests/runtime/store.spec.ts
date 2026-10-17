@@ -238,6 +238,35 @@ test('a vector search finds a vector as soon as it is stored, and never one whos
   expect(nearest()).toEqual([c!, a!])
 })
 
+test('a vector search of one folder and some kinds, scored passage by passage, matches the full scan', () => {
+  store.useVectors({ model: 'm', dimension: 3 })
+  const kinds = ['user', 'assistant', 'cmd', 'result'] as const
+  const ids = store.addEntries(Array.from({ length: 40 }, (_, i) => entry(`entry ${i}`, { kind: kinds[i % kinds.length], session: `s${i % 5}`, project: i % 3 === 0 ? '/work/rare' : '/work/app' })))
+  store.addChunks(ids.flatMap((id, i) => [
+    { entry: id, seq: 0, vector: [1, Math.sin(i), Math.cos(i * 1.7)] },
+    ...(i % 3 === 0 ? [{ entry: id, seq: 1, vector: [Math.cos(i), 1, Math.sin(i * 0.3)] }] : []),
+  ]))
+  store.close()
+  const direct = Store.open(path, { readOnly: true })
+  const scan = Store.open(path, { readOnly: true, directMax: 0 })
+  const query = [1, 0.3, -0.2]
+  const cases: [number, Filter, number, (readonly ('cmd' | 'result')[])[]][] = [
+    [3, { project: '/work/app', kinds: ['user', 'assistant'] }, 2, []],
+    [2, { project: 'rare', kinds: ['user', 'cmd', 'result'], excludeSession: 's1' }, 2, [['cmd'], ['result']]],
+    [5, { project: '/work/app', kinds: ['assistant'] }, 0.3, []],
+  ]
+  for (const [limit, filter, max, apart] of cases) {
+    const want = scan.semantic(query, limit, filter, max, apart)
+    const got = direct.semantic(query, limit, filter, max, apart)
+    expect(got.map(r => r.id)).toEqual(want.map(r => r.id))
+    got.forEach((r, i) => expect(r.score).toBeCloseTo(want[i]!.score, 6))
+  }
+  expect(scan.semantic(query, 3, { project: '/work/app', kinds: ['user'] }, 2).length).toBeGreaterThan(0)
+  direct.close()
+  scan.close()
+  store = Store.open(path)
+})
+
 test('a vector search gives the same entries when the nearest passages settle it as when every passage is read', () => {
   store.useVectors({ model: 'm', dimension: 3 })
   const kinds = ['user', 'assistant', 'cmd', 'edit', 'result', 'call', 'thinking'] as const
@@ -295,6 +324,63 @@ test('a vector search can rank groups of kinds apart, each side up to the limit,
   expect(store.semantic([1, 0], 2, {}, 2).map(h => h.id)).toEqual([ids[0]!, ids[1]!])
   expect(store.semantic([1, 0], 2, {}, 2, [['cmd', 'edit']]).map(h => h.id)).toEqual([ids[0]!, ids[1]!, ids[3]!, ids[4]!])
   expect(store.semantic([1, 0], 1, {}, 2, [['cmd', 'edit'], ['call', 'result']]).map(h => h.id)).toEqual([ids[0]!, ids[3]!, ids[6]!])
+})
+
+test('the entries that wait for vectors are found again after the newest are dropped and others take their ids', () => {
+  store.useVectors({ model: 'm1', dimension: 2 })
+  const ids = store.addEntries([entry('an old question about the deploy'), entry('a newer question about the cache', { session: 's2' })])
+  store.addChunks(ids.map(id => ({ entry: id, seq: 0, vector: [1, 0] })))
+  expect(store.pending(10)).toEqual([])
+  store.dropSession('s2')
+  store.addEntries([entry('a fresh question about the parser', { session: 's3' })])
+  expect(store.pending(10).map(p => p.text)).toEqual(['a fresh question about the parser'])
+  expect(store.pending(10, 's3')).toHaveLength(1)
+  store.useVectors({ model: 'm2', dimension: 2 })
+  expect(store.pending(10)).toHaveLength(2)
+  expect(store.countPending()).toBe(2)
+})
+
+test('an image entry waits for a vector by the length of its caption, not of its path', () => {
+  store.useVectors({ model: 'm1', dimension: 2 })
+  store.addEntries([entry('/home/u/.local/share/lookback/images/abc.png\nok', { kind: 'image' })])
+  expect(store.pending(10)).toEqual([])
+  expect(store.countPending()).toBe(0)
+})
+
+test('the recent sessions of a folder take its subfolders and no sibling whose name starts the same', () => {
+  store.addEntries([
+    entry('in the folder', { session: 'a', project: '/work/app' }),
+    entry('in a subfolder', { session: 'b', project: '/work/app/web' }),
+    entry('in a sibling', { session: 'c', project: '/work/app-old' }),
+    entry('in a sibling with a dot', { session: 'd', project: '/work/app.bak' }),
+  ])
+  expect(store.recent('/work/app', 10).map(r => r.session).sort()).toEqual(['a', 'b'])
+  expect(store.recent('/work/app', 10, '', false, true).map(r => r.session)).toEqual(['a'])
+  expect(store.recent('', 10).map(r => r.session).sort()).toEqual(['a', 'b', 'c', 'd'])
+  expect(store.projects().sort()).toEqual(['/work/app', '/work/app-old', '/work/app.bak', '/work/app/web'])
+})
+
+test('a word search ranked apart by groups of kinds gives what one search per group gives, in one pass', () => {
+  store.addEntries([
+    entry('deploy the cache now'),
+    entry('deploy deploy deploy', { kind: 'assistant' }),
+    entry('bun run deploy', { kind: 'cmd' }),
+    entry('deploy --force deploy', { kind: 'cmd' }),
+    entry('Bash deploy log', { kind: 'result' }),
+    entry('nothing to see here'),
+  ])
+  const groups = [['user', 'assistant'], ['cmd'], ['result']] as const
+  const apart = store.lexicalApart(['deploy'], 1, {}, groups)
+  expect(apart).toEqual(groups.flatMap(kinds => store.lexical(['deploy'], 1, { kinds })))
+  expect(apart).toHaveLength(3)
+})
+
+test('lookups by session and kind, and by folder, read an index made for them', () => {
+  const raw = new Database(path, { readonly: true })
+  const plan = (sql: string) => (raw.query(`explain query plan ${sql}`).all() as { detail: string }[]).map(p => p.detail).join(' ')
+  expect(plan("select id from entries where session = 's' and kind = 'user' order by ts limit 1")).toContain('entries_session_kind')
+  expect(plan("select session, max(ts) from entries where parent = '' and project = '/p' group by session")).toContain('entries_project')
+  raw.close()
 })
 
 test('a vector search of another length than the stored vectors finds nothing', () => {
@@ -464,6 +550,53 @@ test('an index of 32-bit vectors is brought up to bytes in place: the order they
   expect(raw.query("select 1 from sqlite_master where name like 'vector0_%'").get()).toBeNull()
   expect(raw.query("select 1 from meta where key = 'compact'").get()).toBeNull()
   raw.close()
+})
+
+test('counting the entries of some kinds reads an index, not every entry', () => {
+  store.addEntries([entry('one'), { ...entry('two'), kind: 'assistant' }])
+  expect(store.termCounts(['two'], ['user', 'assistant']).total).toBe(2)
+  const raw = new Database(path, { readonly: true })
+  const plan = raw.query("explain query plan select count(*) from entries where kind in ('user', 'assistant')").all() as { detail: string }[]
+  raw.close()
+  expect(plan.map(p => p.detail).join(' ')).toContain('COVERING INDEX')
+})
+
+test('an index from before pasted images keeps its entries and gains the image tables', () => {
+  store.addEntries([entry('kept across the upgrade')])
+  store.close()
+  const old = new Database(path)
+  old.exec("drop table pastes; drop table images; update meta set value = '11' where key = 'schema'")
+  old.close()
+  store = Store.open(path)
+  expect(store.stats().entries).toBe(1)
+  store.addPastes('/t/s.jsonl', [{ key: 'u:i0', sha: 'ab', file: 'ab.png', session: 's', project: '/p', ts: 1 }])
+  expect(store.uncaptioned()).toEqual([{ sha: 'ab', file: 'ab.png' }])
+})
+
+test('an index whose image entries were matched by their path is matched by the caption alone after the upgrade', () => {
+  store.close()
+  const old = new Database(path)
+  old.exec(`
+    drop trigger entries_fts_insert;
+    drop trigger entries_fts_delete;
+    create trigger entries_fts_insert after insert on entries begin insert into entries_fts (rowid, text) values (new.id, new.text); end;
+    create trigger entries_fts_delete after delete on entries begin insert into entries_fts (entries_fts, rowid, text) values ('delete', old.id, old.text); end;
+    insert into entries (id, source, session, project, kind, ts, text) values (7, '/t/s.jsonl', 's', '/p', 'image', 1, '/home/u/images/ab.png' || char(10) || 'a settings pane');
+    insert into chunks (entry, seq, embedding) values (7, 0, x'00');
+    update meta set value = '12' where key = 'schema';
+  `)
+  old.close()
+  store = Store.open(path)
+  store.close()
+  const raw = new Database(path, { readonly: true })
+  const matches = (word: string) => raw.query(`select rowid from entries_fts where entries_fts match '${word}'`).all().length
+  expect(matches('png')).toBe(0)
+  expect(matches('settings')).toBe(1)
+  expect(raw.query('select count(*) as n from chunks').get()).toEqual({ n: 0 })
+  raw.close()
+  store = Store.open(path)
+  store.dropSession('s')
+  expect(store.stats().entries).toBe(0)
 })
 
 test('an index of a version with no path to this one is emptied', () => {

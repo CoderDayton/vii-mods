@@ -2,6 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { CaptionUnavailableError } from '../../src/runtime/captions/captioner'
+import type { CaptionSession, CaptionSource } from '../../src/runtime/captions/captioner'
 import type { Embedder, EmbeddingRole } from '../../src/runtime/embedding/embedder'
 import { EmbeddingUnavailableError } from '../../src/runtime/embedding/embedder'
 
@@ -66,6 +68,46 @@ export const summaryRow = (text: string, o: RowOptions): string =>
 
 export const errorRow = (output: string, o: RowOptions): string =>
   JSON.stringify({ type: 'user', sessionId: o.session, cwd: o.cwd ?? '/work/app', timestamp: o.ts ?? '2026-10-01T10:00:07.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', is_error: true, content: output }] } })
+
+// A prompt with images pasted into it; each image's bytes are the given text.
+export const pasteRow = (text: string, images: readonly string[], o: RowOptions): string =>
+  JSON.stringify({
+    type: 'user',
+    sessionId: o.session,
+    cwd: o.cwd ?? '/work/app',
+    timestamp: o.ts ?? '2026-10-01T10:00:00.000Z',
+    uuid: o.uuid ?? `p-${o.session}`,
+    message: { role: 'user', content: [{ type: 'text', text }, ...images.map(bytes => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: Buffer.from(bytes).toString('base64') } }))] },
+  })
+
+// Captions an image as the text of its bytes. `down` fails to open, and an image whose bytes are in `failing` fails.
+export class FakeCaptions implements CaptionSource {
+  opened = 0
+  closed = 0
+  seen: string[] = []
+  down = false
+  readonly failing = new Set<string>()
+
+  constructor(private readonly say: (bytes: string) => string = bytes => `A screenshot that reads: ${bytes}`) {}
+
+  async open(): Promise<CaptionSession> {
+    if (this.down) throw new CaptionUnavailableError('the fake caption server is down')
+    this.opened++
+    return {
+      captioner: {
+        caption: async (image: Uint8Array, media: string): Promise<string> => {
+          const bytes = Buffer.from(image).toString()
+          this.seen.push(`${media} ${bytes}`)
+          if (this.failing.has(bytes)) throw new CaptionUnavailableError(`cannot read ${bytes}`)
+          return this.say(bytes)
+        },
+      },
+      close: async () => {
+        this.closed++
+      },
+    }
+  }
+}
 
 // A projects folder of transcripts that a test fills and removes.
 export class Projects {

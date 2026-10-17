@@ -2,10 +2,14 @@ import { chunksOf } from '../core/text/chunk'
 import { bulkOfRow } from '../core/transcript/bulk'
 import type { Calls } from '../core/transcript/bulk'
 import { entriesOfRow, rowOf, titleOf } from '../core/transcript/entries'
+import { pastesOfRow } from '../core/transcript/pastes'
 import { editsOfRow, fileToolsOf, touchesOfRow } from '../core/transcript/touches'
 import type { FileTools } from '../core/transcript/touches'
+import type { KeptPaste } from '../core/types'
+import type { CaptionSource } from './captions/captioner'
 import { EmbeddingUnavailableError } from './embedding/embedder'
 import type { Embedder } from './embedding/embedder'
+import { captionPending, keepPaste } from './images'
 import type { Store } from './store/store'
 import { listTranscripts, newLines, sessionTranscripts } from './transcript/scan'
 import type { TranscriptFile } from './transcript/scan'
@@ -24,6 +28,8 @@ export type IndexOptions = {
   fileTools?: string
   // Without one the index holds keywords only.
   embedder: Embedder | null
+  // Captions for pasted images; null turns them off. Left out, the index keeps reading pastes or not as it did.
+  captions?: CaptionSource | null
   onProgress?: (progress: Progress) => void
 }
 
@@ -31,8 +37,13 @@ export type IndexReport = {
   files: number
   entries: number
   chunks: number
+  // Entries made from captions of pasted images.
+  images: number
   embeddingError: string | null
+  captionError: string | null
 }
+
+const emptyReport = (): IndexReport => ({ files: 0, entries: 0, chunks: 0, images: 0, embeddingError: null, captionError: null })
 
 // Entries embedded between two writes to the index.
 const EMBED_ENTRIES = 128
@@ -57,10 +68,25 @@ const jobsFor = (store: Store, files: readonly TranscriptFile[]): Job[] => {
 // Reads the transcripts that are new or grew since the last run, then embeds the entries that lack a vector.
 // Safe to stop at any point and run again.
 export const indexAll = async (store: Store, options: IndexOptions): Promise<IndexReport> => {
-  const report: IndexReport = { files: 0, entries: 0, chunks: 0, embeddingError: null }
+  const report = emptyReport()
   await readTranscripts(store, options, report)
+  if (options.captions != null) await captionPending(store, options.captions, report)
   if (options.embedder !== null) await embedPending(store, options.embedder, options, report)
   return report
+}
+
+const pastesIn = (store: Store, rows: readonly ReturnType<typeof rowOf>[]): KeptPaste[] => {
+  const kept = store.keeper()
+  return rows.flatMap(row => pastesOfRow(row).flatMap(p => (kept(p) ? (keepPaste(store.imagesDir, p) ?? []) : [])))
+}
+
+// Reads the part of each transcript that was read before pastes were, for pastes alone.
+const readPastes = async (store: Store, files: readonly TranscriptFile[]): Promise<void> => {
+  for (const file of files) {
+    const state = store.fileState(file.path)
+    if (state === null || state.offset === 0) continue
+    for await (const batch of newLines(file.path, 0, state.offset)) store.addPastes(file.path, pastesIn(store, batch.lines.map(rowOf)))
+  }
 }
 
 // Reads again, for files, edits, calls and results only, the part of each transcript that was read under another
@@ -113,12 +139,18 @@ const readTranscripts = async (store: Store, options: IndexOptions, report: Inde
     await readLater(store, files, isFileTool)
     store.laterRead = true
   }
+  if (options.captions === null) store.imagesRead = false
+  else if (options.captions !== undefined && !store.imagesRead) {
+    await readPastes(store, files)
+    store.imagesRead = true
+  }
   await readJobs(store, jobs, isFileTool, options.onProgress, report)
 }
 
 const readJobs = async (store: Store, jobs: readonly Job[], isFileTool: FileTools, onProgress: IndexOptions['onProgress'], report: IndexReport): Promise<void> => {
   const total = jobs.reduce((sum, j) => sum + j.file.size - j.from, 0)
   let done = 0
+  const withPastes = store.imagesRead
   for (const { file, from } of jobs) {
     report.files++
     let pos = from
@@ -128,7 +160,8 @@ const readJobs = async (store: Store, jobs: readonly Job[], isFileTool: FileTool
       const entries = rows.flatMap(row => [...entriesOfRow(row), ...editsOfRow(row, isFileTool), ...bulkOfRow(row, calls, isFileTool)])
       const touches = rows.flatMap(row => touchesOfRow(row, isFileTool))
       const titles = rows.flatMap(row => titleOf(row) ?? [])
-      store.ingest(file.path, entries, { size: file.size, offset: batch.end }, touches, titles, calls)
+      const pastes = withPastes ? pastesIn(store, rows) : []
+      store.ingest(file.path, entries, { size: file.size, offset: batch.end }, touches, titles, calls, pastes)
       report.entries += entries.length
       done += batch.end - pos
       pos = batch.end
@@ -150,7 +183,7 @@ const REFRESH_EMBED_MS = 2500
 // Reads the new lines of one session's transcripts, and of its sub-agents', then embeds new entries while
 // time is left. It runs while a prompt waits, so vectors of another model stay as they are until a full run.
 export const refreshSession = async (store: Store, options: RefreshOptions): Promise<IndexReport> => {
-  const report: IndexReport = { files: 0, entries: 0, chunks: 0, embeddingError: null }
+  const report = emptyReport()
   const jobs = jobsFor(store, await sessionTranscripts(options.projectsRoot, options.session))
   await readJobs(store, jobs, fileToolsOf(store.fileTools ?? ''), undefined, report)
   const { embedder } = options

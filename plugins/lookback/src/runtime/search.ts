@@ -93,7 +93,7 @@ export const retrieve = async (store: Store, embedder: Embedder | null, query: s
   const named = filter.project === undefined || filter.project === '' ? store.projects().filter(p => names(terms, p)).slice(0, NAMED_PROJECTS) : []
   const scopes: Filter[] = [filter, ...named.map(project => ({ ...filter, project }))]
   const everyKind = options.kinds === undefined || options.kinds.length === 0
-  const wordsIn = (scope: Filter): Ranked[] => (everyKind ? [PROSE_KINDS, CODE_KINDS, BULK_KINDS].flatMap(kinds => store.lexical(terms, asked, { ...scope, kinds })) : store.lexical(terms, asked, scope))
+  const wordsIn = (scope: Filter): Ranked[] => (everyKind ? store.lexicalApart(terms, asked, scope, [PROSE_KINDS, CODE_KINDS, BULK_KINDS]) : store.lexical(terms, asked, scope))
   const words = merged(scopes.map(wordsIn))
 
   let meaning: Ranked[] = []

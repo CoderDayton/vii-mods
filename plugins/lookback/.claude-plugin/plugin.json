@@ -58,6 +58,24 @@
       "title": "Embedding endpoint",
       "description": "The OpenAI-compatible base URL of the embedding server. Ollama serves one at /v1.",
       "default": "http://localhost:11434/v1"
+    },
+    "captionServer": {
+      "type": "string",
+      "title": "Image caption server command",
+      "description": "A llama-server command with a vision model and its --mmproj, such as: llama-server -m model.gguf --mmproj mmproj.gguf. lookback starts it when there are pasted images to caption and stops it when done; it adds --host and --port. Empty leaves captions to the model below.",
+      "default": ""
+    },
+    "captionModel": {
+      "type": "string",
+      "title": "Image caption model",
+      "description": "A vision model a running server serves at the caption endpoint, such as lfm2.5-vl in Ollama. Empty, with no server command, leaves pasted images uncaptioned.",
+      "default": ""
+    },
+    "captionUrl": {
+      "type": "string",
+      "title": "Image caption endpoint",
+      "description": "The OpenAI-compatible base URL of a running server for the caption model. Your screenshots are sent there.",
+      "default": "http://localhost:11434/v1"
     }
   }
 }

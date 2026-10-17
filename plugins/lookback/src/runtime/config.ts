@@ -6,6 +6,17 @@ export type EmbeddingConfig = {
   apiKey: string
 }
 
+// Captions for pasted images: `server` is a command lookback starts for each run that has images to caption,
+// such as llama-server with its model; else `model` is asked for at `baseURL`. Both empty is off. `named`
+// is false when neither variable is set at all, so a run by hand keeps the setting the index was read under.
+export type CaptionConfig = {
+  named: boolean
+  server: string
+  model: string
+  baseURL: string
+  apiKey: string
+}
+
 export type Config = {
   projectsRoot: string
   databasePath: string
@@ -13,6 +24,7 @@ export type Config = {
   // when the caller names no setting, which keeps the one the index was built under.
   fileTools: string | undefined
   embedding: EmbeddingConfig
+  caption: CaptionConfig
 }
 
 type Env = Readonly<Record<string, string | undefined>>
@@ -41,6 +53,13 @@ export const configFrom = (env: Env): Config => {
       baseURL: pick(env, 'LOOKBACK_EMBEDDING_URL') ?? DEFAULT_URL,
       model: pick(env, 'LOOKBACK_EMBEDDING_MODEL') ?? DEFAULT_MODEL,
       apiKey: pick(env, 'LOOKBACK_EMBEDDING_KEY') ?? DEFAULT_KEY,
+    },
+    caption: {
+      named: env.LOOKBACK_CAPTION_SERVER !== undefined || env.LOOKBACK_CAPTION_MODEL !== undefined,
+      server: pick(env, 'LOOKBACK_CAPTION_SERVER') ?? '',
+      model: pick(env, 'LOOKBACK_CAPTION_MODEL') ?? '',
+      baseURL: pick(env, 'LOOKBACK_CAPTION_URL') ?? DEFAULT_URL,
+      apiKey: pick(env, 'LOOKBACK_CAPTION_KEY') ?? DEFAULT_KEY,
     },
   }
 }

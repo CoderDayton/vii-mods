@@ -1,4 +1,4 @@
-import OpenAI from 'openai'
+import type OpenAI from 'openai'
 
 export type EmbeddingRole = 'document' | 'query'
 
@@ -40,7 +40,8 @@ const DEFAULT_TIMEOUT_MS = 120_000
 // An embedder for any server that speaks the OpenAI embeddings API, Ollama's /v1 among them.
 export class OpenAIEmbedder implements Embedder {
   readonly model: string
-  private readonly client: OpenAI
+  private readonly options: OpenAIEmbedderOptions
+  private client: Promise<OpenAI> | null = null
   private readonly batchSize: number
   private readonly prefixes: Prefixes
   private known: number | null = null
@@ -49,12 +50,13 @@ export class OpenAIEmbedder implements Embedder {
     this.model = options.model
     this.batchSize = options.batchSize ?? DEFAULT_BATCH
     this.prefixes = options.prefixes ?? prefixesFor(options.model)
-    this.client = new OpenAI({
-      baseURL: options.baseURL,
-      apiKey: options.apiKey ?? 'ollama',
-      timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      maxRetries: options.maxRetries ?? 1,
-    })
+    this.options = options
+  }
+
+  private connect(): Promise<OpenAI> {
+    const { baseURL, apiKey, timeoutMs, maxRetries } = this.options
+    this.client ??= import('openai').then(({ default: Client }) => new Client({ baseURL, apiKey: apiKey ?? 'ollama', timeout: timeoutMs ?? DEFAULT_TIMEOUT_MS, maxRetries: maxRetries ?? 1 }))
+    return this.client
   }
 
   async embed(texts: readonly string[], role: EmbeddingRole): Promise<number[][]> {
@@ -74,7 +76,7 @@ export class OpenAIEmbedder implements Embedder {
 
   private async request(input: string[]): Promise<number[][]> {
     try {
-      const response = await this.client.embeddings.create({ model: this.model, input, encoding_format: 'float' })
+      const response = await (await this.connect()).embeddings.create({ model: this.model, input, encoding_format: 'float' })
       if (response.data.length !== input.length) throw new Error(`asked for ${input.length} vectors, got ${response.data.length}`)
       return [...response.data].sort((a, b) => a.index - b.index).map(d => d.embedding)
     } catch (error) {

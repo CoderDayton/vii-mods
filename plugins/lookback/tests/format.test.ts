@@ -39,6 +39,12 @@ test('a hit shows its date, project folder, short id, kind and snippet', () => {
   expect(text).toContain('The doubled brackets are fixed.')
 })
 
+test('a pasted image shows its caption, then where the image is kept', () => {
+  const entries = [{ id: 4, kind: 'image' as const, text: '/home/u/.local/share/lookback/images/ab12.png\nSettings pane, the Save button cut off at the right edge', score: 0.9 }]
+  const shown = formatHits([hit({ entries })], ['save'], { maxChars: 2000 }).split('\n').slice(1)
+  expect(shown).toEqual(['  image     Settings pane, the Save button cut off at the right edge', '            /home/u/.local/share/lookback/images/ab12.png'])
+})
+
 test('a hit from the session asking says so on its first line, before its title', () => {
   const [head] = formatHits([hit({ own: true, title: 'Button labels' })], [], { maxChars: 2000 }).split('\n')
   expect(head).toBe('2026-10-09  claude-mods  d18dbf28  this session, earlier  Button labels')

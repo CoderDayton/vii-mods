@@ -97,6 +97,7 @@ When you run several Claude sessions at once, this pane shows them all: who is w
 
 - **Local.** Transcripts stay on disk, vectors come from your own Ollama, and the index is one SQLite file.
 - **It records more than chat:** commands, file edits, sub-agent runs and the MCP tools you name.
+- **Screenshots, if you want them:** set a local vision model and the images you paste are captioned and searchable, each with the path to open it. Off by default.
 - **Three ways in:** a tool Claude can call, the `/lookback` command, and recall shown beside prompts that ask about earlier work.
 - `/lookback <question>` · `/lookback fix <error>` · `/lookback how <words>` · `/lookback blame <file>` · `/lookback show <id>` · `/lookback forget <id>`.
 

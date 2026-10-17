@@ -1,6 +1,6 @@
-import type { Filter } from '../../core/types'
+import type { EntryKind, Filter } from '../../core/types'
 import type { Params } from './database'
-import { clauseOf } from './filters'
+import { clauseOf, kindList } from './filters'
 
 export const MAX_TERMS = 12
 
@@ -30,5 +30,21 @@ export const lexicalQuery = (terms: readonly string[], limit: number, filter: Fi
     where entries_fts match $match and ${where.sql}
     order by score desc, e.id desc
     limit ${Math.max(1, Math.trunc(limit))}`
+  return { sql, params: { ...where.params, match } }
+}
+
+export const lexicalApartQuery = (terms: readonly string[], limit: number, filter: Filter, groups: readonly (readonly EntryKind[])[]): LexicalQuery | null => {
+  const match = matchExpression(terms)
+  if (match === null || groups.length === 0) return null
+  const where = clauseOf({ ...filter, kinds: groups.flat() }, 'e')
+  const side = `case ${groups.map((kinds, i) => `when e.kind in (${kindList(kinds)}) then ${i}`).join(' ')} end`
+  const sql = `
+    select id, score from (
+      select id, score, side, row_number() over (partition by side order by score desc, id desc) as place from (
+        select e.id as id, -bm25(entries_fts) as score, ${side} as side
+        from entries_fts join entries e on e.id = entries_fts.rowid
+        where entries_fts match $match and ${where.sql}))
+    where place <= ${Math.max(1, Math.trunc(limit))}
+    order by side, score desc, id desc`
   return { sql, params: { ...where.params, match } }
 }

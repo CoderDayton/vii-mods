@@ -10,6 +10,10 @@ export type Options = {
   fileTools: string
   embeddingModel: string
   embeddingUrl: string
+  // Captions of pasted images are off unless one of these two is set; the server command wins.
+  captionServer: string
+  captionModel: string
+  captionUrl: string
 }
 
 export const DEFAULTS: Options = {
@@ -22,6 +26,9 @@ export const DEFAULTS: Options = {
   fileTools: '',
   embeddingModel: 'nomic-embed-text',
   embeddingUrl: 'http://localhost:11434/v1',
+  captionServer: '',
+  captionModel: '',
+  captionUrl: 'http://localhost:11434/v1',
 }
 
 const MAX_LIMIT = 15
@@ -40,4 +47,7 @@ export const readOptions = (raw: PluginOptions): Options => ({
   fileTools: text(raw.fileTools, DEFAULTS.fileTools),
   embeddingModel: text(raw.embeddingModel, DEFAULTS.embeddingModel),
   embeddingUrl: text(raw.embeddingUrl, DEFAULTS.embeddingUrl),
+  captionServer: text(raw.captionServer, DEFAULTS.captionServer),
+  captionModel: text(raw.captionModel, DEFAULTS.captionModel),
+  captionUrl: text(raw.captionUrl, DEFAULTS.captionUrl),
 })

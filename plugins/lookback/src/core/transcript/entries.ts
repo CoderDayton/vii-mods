@@ -2,7 +2,7 @@ import { chunksOf } from '../text/chunk'
 import { redact } from '../text/redact'
 import { isCommandRow, stripInjected } from './strip'
 
-export const ENTRY_KINDS = ['user', 'assistant', 'thinking', 'error', 'cmd', 'edit', 'summary', 'call', 'result'] as const
+export const ENTRY_KINDS = ['user', 'assistant', 'thinking', 'error', 'cmd', 'edit', 'summary', 'call', 'result', 'image'] as const
 
 export type EntryKind = (typeof ENTRY_KINDS)[number]
 

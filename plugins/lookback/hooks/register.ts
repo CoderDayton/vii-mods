@@ -1,6 +1,6 @@
 import type { Hook, Register } from 'claude-code'
 
-import { NO_COMMAND, NO_FIX, TOOL_NAME, TOOL_SPEC, WHEN_TO_SEARCH, argvOf, askedArgv, cliEnv, commandArgv, fileContext, fileNoteArgv, fixContext, recallArgv, recallContext, recentSection, requestOf, shownIds } from '../src/core/call'
+import { NO_COMMAND, NO_FIX, TOOL_NAME, TOOL_SPEC, WHEN_TO_SEARCH, argvOf, askedArgv, captionNotice, cliEnv, commandArgv, commandText, fileContext, fileNoteArgv, fixContext, recallArgv, recallContext, recentSection, requestOf, shownIds } from '../src/core/call'
 import { readOptions } from '../src/core/options'
 import type { Options } from '../src/core/options'
 import { errorGist } from '../src/core/search/fix'
@@ -55,7 +55,12 @@ const refreshIndex = async ($: Engine, options: Options): Promise<void> => {
   try {
     await ensurePackages($)
     const run = await lookback($, options, ['index', '--quiet'], INDEX_MS)
-    if (run.code !== 0) await $.ui.toast(`lookback: indexing failed: ${run.err || `exit ${run.code}`}`)
+    if (run.code !== 0) {
+      await $.ui.toast(`lookback: indexing failed: ${run.err || `exit ${run.code}`}`)
+      return
+    }
+    const captions = captionNotice(run.err)
+    if (captions !== null) await $.ui.toast(captions)
   } catch {
     await $.ui.toast('lookback: could not run bun, so past sessions are not indexed. Install bun from bun.sh.')
   }
@@ -170,7 +175,7 @@ export const register: Register = (on, raw) => {
       let run = await lookback($, options, argv, argv[0] === 'index' ? INDEX_MS : SEARCH_MS)
       // "how did we fix the build" is a question, not words of a command: with nothing found, search for it.
       if (run.code === 0 && (run.out === NO_FIX || run.out === NO_COMMAND)) run = await lookback($, options, argvOf({ query: args }, { limit: options.limit, exclude: me }), SEARCH_MS)
-      return { text: run.code === 0 ? run.out : run.err || `lookback exited with ${run.code}` }
+      return { text: commandText(run) }
     } catch {
       return { text: NO_BUN }
     }

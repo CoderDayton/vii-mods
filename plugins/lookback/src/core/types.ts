@@ -37,7 +37,7 @@ export type ForgottenSession = { session: string; project: string; at: number }
 // made no edit.
 // The kinds whose text is something a person or Claude said, and the kinds whose text is code that was run or
 // written. A search fetches candidates of each sort apart, so one sort cannot fill every place.
-export const PROSE_KINDS: readonly EntryKind[] = ['user', 'assistant', 'thinking', 'error', 'summary']
+export const PROSE_KINDS: readonly EntryKind[] = ['user', 'assistant', 'thinking', 'error', 'summary', 'image']
 export const CODE_KINDS: readonly EntryKind[] = ['cmd', 'edit']
 // The calls of other tools and what they returned: bulk that would fill the places of the other kinds.
 export const BULK_KINDS: readonly EntryKind[] = ['call', 'result']
@@ -45,6 +45,9 @@ export const BULK_KINDS: readonly EntryKind[] = ['call', 'result']
 export type Turn = { start: number; asked?: string; ended?: string; reply?: string }
 
 export type FileUse = { path: string; session: string; parent?: string; project: string; edits: number; reads: number; first: number; last: number }
+
+// A pasted image saved beside the index as `file`, named by `sha`, the hash of its bytes.
+export type KeptPaste = { key: string; sha: string; file: string; session: string; parent?: string; project: string; ts: number }
 
 export type ChunkVector = { entry: number; seq: number; vector: readonly number[] }
 

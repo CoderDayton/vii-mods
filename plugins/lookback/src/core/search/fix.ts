@@ -47,7 +47,7 @@ export const sameError = (text: string, weights: ReadonlyMap<string, number>): b
   return all > 0 && shared >= all * MIN_SHARED_WEIGHT
 }
 
-const LABEL: Record<EntryKind, string> = { cmd: 'then ran', assistant: 'said', user: 'asked', error: 'then hit', thinking: 'thought', edit: 'changed', summary: 'summed up', call: 'called', result: 'returned' }
+const LABEL: Record<EntryKind, string> = { cmd: 'then ran', assistant: 'said', user: 'asked', error: 'then hit', thinking: 'thought', edit: 'changed', summary: 'summed up', call: 'called', result: 'returned', image: 'pasted' }
 
 const render = (fix: Fix, terms: readonly string[]): string =>
   [headOf(fix), `  ${'error'.padEnd(9)} ${snippetOf(fix.error, terms, LINE_WIDTH)}`, ...fix.then.map(e => `  ${LABEL[e.kind].padEnd(9)} ${snippetOf(e.text, [], LINE_WIDTH)}`)].join('\n')

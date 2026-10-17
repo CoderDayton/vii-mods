@@ -168,7 +168,7 @@ test('starting a session updates the index in the background', async ($, on) => 
   expect(cli(w).map(subcommand)).toEqual(['index'])
   expect(cli(w)[0]?.argv.at(-1)).toBe('--quiet')
   expect(cli(w)[0]?.argv[1]?.endsWith('bin/lookback.ts')).toBe(true)
-  expect(cli(w)[0]?.env).toEqual({ LOOKBACK_EMBEDDING_MODEL: 'nomic-embed-text', LOOKBACK_EMBEDDING_URL: 'http://localhost:11434/v1', LOOKBACK_FILE_TOOLS: '' })
+  expect(cli(w)[0]?.env).toEqual({ LOOKBACK_EMBEDDING_MODEL: 'nomic-embed-text', LOOKBACK_EMBEDDING_URL: 'http://localhost:11434/v1', LOOKBACK_FILE_TOOLS: '', LOOKBACK_CAPTION_SERVER: '', LOOKBACK_CAPTION_MODEL: '', LOOKBACK_CAPTION_URL: 'http://localhost:11434/v1' })
 })
 
 test('the packages are installed first when they are missing', async ($, on) => {

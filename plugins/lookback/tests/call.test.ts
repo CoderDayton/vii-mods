@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { FIX_TAG, RECALL_TAG, argvOf, askedArgv, cliEnv, commandArgv, fixContext, recallArgv, recallContext, requestOf, shownIds } from '../src/core/call'
+import { FIX_TAG, RECALL_TAG, argvOf, askedArgv, captionNotice, cliEnv, commandArgv, commandText, fixContext, recallArgv, recallContext, requestOf, shownIds } from '../src/core/call'
 
 test('a question about the past is recalled for the session asking, and a result of this session is read', () => {
   expect(askedArgv('--did you rebuild it?', 'me')).toEqual(['recall', '--asked', '--session', 'me', '--', '--did you rebuild it?'])
@@ -81,7 +81,7 @@ test('/lookback reads its first word as a command only when the rest fits it', (
   const argv = (args: string) => commandArgv(args, 5, 'me')
   expect(argv('')).toEqual(['stats'])
   expect(argv('doctor')).toEqual(['doctor'])
-  expect(argv('index')).toEqual(['index'])
+  expect(argv('index')).toEqual(['index', '--quiet', '--wait'])
   expect(argv('recent')).toEqual(['recent', '--limit', '10'])
   expect(argv('recent changes to the parser')[0]).toBe('search')
   expect(argv('show d18dbf28')).toEqual(['show', '--offset', '0', '--', 'd18dbf28'])
@@ -98,6 +98,24 @@ test('/lookback reads its first word as a command only when the rest fits it', (
   expect(argv('blame the parser for this').slice(0, 1)).toEqual(['search'])
 })
 
+test('/lookback shows what a command said on stderr beside its answer, without the repeated name', () => {
+  expect(commandText({ code: 0, out: 'Read 2 transcripts.', err: 'lookback: embedding stopped (down); keyword search still works' })).toBe(
+    'Read 2 transcripts.\nembedding stopped (down); keyword search still works',
+  )
+  expect(commandText({ code: 0, out: 'Found.', err: '' })).toBe('Found.')
+  expect(commandText({ code: 0, out: '', err: 'lookback: no session starts with "abc"' })).toBe('no session starts with "abc"')
+  expect(commandText({ code: 1, out: '', err: 'lookback: boom' })).toBe('boom')
+  expect(commandText({ code: 3, out: '', err: '' })).toBe('lookback exited with 3')
+})
+
+test('a background index run raises the caption failure alone, since a missing embedding server is common', () => {
+  expect(captionNotice('lookback: embedding stopped (x); keyword search still works\nlookback: image captions stopped (no server); the images wait for the next run')).toBe(
+    'lookback: image captions stopped (no server); the images wait for the next run',
+  )
+  expect(captionNotice('lookback: embedding stopped (x); keyword search still works')).toBeNull()
+  expect(captionNotice('')).toBeNull()
+})
+
 test('/lookback searches for anything else, also when it starts with a command word', () => {
   const argv = (args: string) => commandArgv(args, 5, 'me')
   expect(argv('bracket fix')).toEqual(['search', '--limit', '5', '--exclude', 'me', '--', 'bracket fix'])
@@ -108,10 +126,14 @@ test('/lookback searches for anything else, also when it starts with a command w
 })
 
 test('the settings reach the command line as environment variables', () => {
-  expect(cliEnv({ limit: 5, autoRecall: true, autoIndex: true, errorHints: true, sessionDigest: true, fileNotes: true, fileTools: 'mcp__files', embeddingModel: 'm', embeddingUrl: 'http://h/v1' })).toEqual({
+  const options = { limit: 5, autoRecall: true, autoIndex: true, errorHints: true, sessionDigest: true, fileNotes: true, fileTools: 'mcp__files', embeddingModel: 'm', embeddingUrl: 'http://h/v1' }
+  expect(cliEnv({ ...options, captionServer: 'llama-server -m v.gguf', captionModel: 'vl', captionUrl: 'http://h:8080/v1' })).toEqual({
     LOOKBACK_EMBEDDING_MODEL: 'm',
     LOOKBACK_EMBEDDING_URL: 'http://h/v1',
     LOOKBACK_FILE_TOOLS: 'mcp__files',
+    LOOKBACK_CAPTION_SERVER: 'llama-server -m v.gguf',
+    LOOKBACK_CAPTION_MODEL: 'vl',
+    LOOKBACK_CAPTION_URL: 'http://h:8080/v1',
   })
 })
 

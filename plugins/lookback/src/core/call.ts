@@ -64,7 +64,7 @@ export const TOOL_SPEC = {
       query: { type: 'string', description: 'The question or exact text to look for. Not needed with `session`.' },
       mode: { type: 'string', enum: MODES, description: 'search (the default), fix, how or blame.' },
       session: { type: 'string', description: 'A session id from an earlier result, or its start: reads that session instead of searching.' },
-      kind: { type: 'array', items: { type: 'string', enum: ENTRY_KINDS }, description: 'Only entries of these kinds, in a search or a session read. Every kind when left out. `cmd` is a shell command, `edit` a change to a file, `call` a call to any other tool, `result` what a tool returned, `summary` what a compaction kept.' },
+      kind: { type: 'array', items: { type: 'string', enum: ENTRY_KINDS }, description: 'Only entries of these kinds, in a search or a session read. Every kind when left out. `cmd` is a shell command, `edit` a change to a file, `call` a call to any other tool, `result` what a tool returned, `summary` what a compaction kept, `image` the caption of an image the user pasted, with the path it is kept at.' },
       offset: { type: 'number', description: 'Where to go on: sessions to pass over in a search, entries in a session.' },
       project: { type: 'string', description: 'Only sessions whose working folder contains this text.' },
       since: { type: 'string', description: 'Only the last span of time, such as 12h, 30d or 2w.' },
@@ -151,7 +151,8 @@ export const commandArgv = (args: string, limit: number, exclude: string): strin
   const tail = rest.join(' ')
   const id = rest[0] ?? ''
   if (args === '') return ['stats']
-  if ((word === 'stats' || word === 'doctor' || word === 'index') && tail === '') return [word]
+  if (word === 'index' && tail === '') return ['index', '--quiet', '--wait']
+  if ((word === 'stats' || word === 'doctor') && tail === '') return [word]
   if (word === 'recent' && tail === '') return ['recent', '--limit', '10']
   if (word === 'show' && SESSION_ID.test(id) && rest.length <= 2 && /^\d*$/.test(rest[1] ?? '')) return argvOf({ query: '', session: id, offset: Number(rest[1] ?? 0) }, { limit })
   if (word === 'forget' && tail === '--list') return ['forget', '--list']
@@ -162,6 +163,19 @@ export const commandArgv = (args: string, limit: number, exclude: string): strin
   if ((word === 'fix' || word === 'how') && tail !== '') return argvOf({ query: tail, mode: word }, { limit, exclude })
   return argvOf({ query: args }, { limit, exclude })
 }
+
+const NAME_PREFIX = /^lookback: /gm
+
+// What `/lookback` shows for a run: its answer, then what it said on stderr. The command's output is already
+// headed `lookback:`, so the name is cut from each line of stderr.
+export const commandText = (run: { code: number; out: string; err: string }): string => {
+  const notices = run.err.replace(NAME_PREFIX, '').trim()
+  if (run.code !== 0) return notices || `lookback exited with ${run.code}`
+  return [run.out, notices].filter(t => t !== '').join('\n')
+}
+
+// The line of a background index run's stderr that says image captions stopped, or null.
+export const captionNotice = (err: string): string | null => err.split('\n').find(l => l.startsWith('lookback: image captions stopped')) ?? null
 
 // The arguments of `lookback recall` for a prompt typed in a folder. Sessions already shown are named by the
 // start of their ids.
@@ -186,6 +200,9 @@ export const cliEnv = (options: Options): Record<string, string> => ({
   LOOKBACK_EMBEDDING_MODEL: options.embeddingModel,
   LOOKBACK_EMBEDDING_URL: options.embeddingUrl,
   LOOKBACK_FILE_TOOLS: options.fileTools,
+  LOOKBACK_CAPTION_SERVER: options.captionServer,
+  LOOKBACK_CAPTION_MODEL: options.captionModel,
+  LOOKBACK_CAPTION_URL: options.captionUrl,
 })
 
 // Past sessions as a block beside a prompt. They are the user's own words and Claude's earlier answers, kept

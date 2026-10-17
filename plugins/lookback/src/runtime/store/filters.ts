@@ -1,9 +1,11 @@
-import type { Filter } from '../../core/types'
+import type { EntryKind, Filter } from '../../core/types'
 import type { Params } from './database'
 
 export type Clause = { sql: string; params: Params }
 
 const KIND = /^[a-z]+$/
+
+export const kindList = (kinds: readonly EntryKind[]): string => kinds.map(k => `'${k}'`).join(', ')
 
 // The WHERE conditions of a filter over a table that has project, kind, ts, session and parent columns, with
 // each value bound as a parameter. Leaving a session out leaves out the sub-agents it started. `alias` prefixes the column names.
