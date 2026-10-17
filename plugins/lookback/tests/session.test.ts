@@ -23,6 +23,12 @@ test('a session shows its full id, project, dates and every entry in order with 
   expect(lines.slice(1)).toEqual(['10:00 user      The buttons show double brackets.', '10:01 cmd       bun test', '10:02 assistant Fixed: the labels are plain now.'])
 })
 
+test('a pasted image shows its caption first and the file it is kept in last', () => {
+  const image = [{ ...entries[0]!, kind: 'image' as const, text: '/home/u/.local/share/lookback/images/ab12.png\nSettings pane,\nthe Save button cut off' }]
+  const text = formatSession({ ...summary, entries: 1 }, image, { offset: 0, maxChars: 4000, entryChars: 400 })
+  expect(text.split('\n')[1]).toBe('10:00 image     Settings pane, the Save button cut off (ab12.png)')
+})
+
 test('a long entry is cut, and line breaks in it become spaces', () => {
   const long = [{ ...entries[0]!, text: `first line\nsecond ${'word '.repeat(200)}` }]
   const text = formatSession({ ...summary, entries: 1 }, long, { offset: 0, maxChars: 4000, entryChars: 60 })

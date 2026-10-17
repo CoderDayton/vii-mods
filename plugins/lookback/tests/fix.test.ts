@@ -44,6 +44,11 @@ test('a fix shows the session, the error, the commands run after it and what was
   ])
 })
 
+test('a pasted image shows its caption first and the file it is kept in last', () => {
+  const image = { kind: 'image' as const, text: `/home/u/.local/share/lookback/images/${'ab'.repeat(32)}.png\nSettings pane, the Save button cut off` }
+  expect(formatFixes([fix({ then: [image] })], [], { maxChars: 2000 }).split('\n')[2]).toBe(`  pasted    Settings pane, the Save button cut off (${'ab'.repeat(32)}.png)`)
+})
+
 test('no fix says so, and a long list is cut to the size asked', () => {
   expect(formatFixes([], [], { maxChars: 2000 })).toBe('No past session got past this error.')
   const text = formatFixes(Array.from({ length: 20 }, () => fix()), [], { maxChars: 500 })

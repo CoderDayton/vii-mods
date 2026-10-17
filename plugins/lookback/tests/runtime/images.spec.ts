@@ -164,6 +164,28 @@ test('captions get vectors like any other entry', async () => {
   expect(embedder.calls.flatMap(c => c.texts).join(' ')).toContain('build log')
 })
 
+test('the rest of the index gets its vectors before any image is captioned', async () => {
+  projects.write('proj', 's1', [userRow('why does the parser drop the last token of a line?', { session: 's1' }), pasteRow('[Image #1] look', ['a screenshot of the parser'], { session: 's1', uuid: 'u2' })])
+  let waiting = -1
+  const captions = new FakeCaptions(bytes => {
+    waiting = store.countPending()
+    return `A screenshot that reads: ${bytes}`
+  })
+  await run(captions, new FakeEmbedder())
+  expect(waiting).toBe(0)
+  expect(store.pending(10)).toEqual([])
+})
+
+test('while the caption server cannot be reached, no image is given up', async () => {
+  projects.write('proj', 's1', [pasteRow('[Image #1] [Image #2] look', ['first screenshot', 'second screenshot'], { session: 's1' })])
+  const captions = new FakeCaptions()
+  captions.unreachable = true
+  for (let i = 0; i < 4; i++) expect((await run(captions)).captionError).toContain('unreachable')
+  expect(captions.seen).toHaveLength(4)
+  captions.unreachable = false
+  expect((await run(captions)).images).toBe(2)
+})
+
 test('a forgotten session has its pastes left out and none written beside the index', async () => {
   projects.write('proj', 's1', [pasteRow('[Image #1] look', ['a forgotten screenshot'], { session: 's1' })])
   await run(null)

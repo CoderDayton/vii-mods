@@ -6,3 +6,11 @@ export class CaptionUnavailableError extends Error {
     super(message, { cause })
   }
 }
+
+export class CaptionRejectedError extends Error {
+  override readonly name = 'CaptionRejectedError'
+
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause })
+  }
+}

@@ -1,7 +1,7 @@
 import type OpenAI from 'openai'
 
 import type { CaptionConfig, Config } from '../config'
-import { CaptionUnavailableError } from './errors'
+import { CaptionRejectedError, CaptionUnavailableError } from './errors'
 import { startServer } from './server'
 
 export interface Captioner {
@@ -16,7 +16,7 @@ export interface CaptionSource {
   open(): Promise<CaptionSession>
 }
 
-export { CaptionUnavailableError }
+export { CaptionRejectedError, CaptionUnavailableError }
 
 // Plain transcription: a prompt that asks for sections makes small models fill them with guesses.
 const PROMPT = 'Transcribe all visible text in this image, exactly as written. Then say in one line what app or page this is.'
@@ -54,7 +54,8 @@ export class OpenAICaptioner implements Captioner {
       return response.choices[0]?.message.content ?? ''
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
-      throw new CaptionUnavailableError(`captioning with ${this.options.model} failed: ${reason}`, error)
+      const answered = typeof (error as { status?: unknown } | null)?.status === 'number'
+      throw new (answered ? CaptionRejectedError : CaptionUnavailableError)(`captioning with ${this.options.model} failed: ${reason}`, error)
     }
   }
 }

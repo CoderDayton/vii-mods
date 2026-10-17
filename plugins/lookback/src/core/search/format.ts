@@ -29,6 +29,12 @@ export const snippetOf = (text: string, terms: readonly string[], width: number)
 
 export const folderOf = (project: string): string => project.split('/').filter(Boolean).pop() ?? '-'
 
+export const textInLine = (kind: string, text: string): string => {
+  const cut = text.indexOf('\n')
+  if (kind !== 'image' || cut < 0) return text
+  return `${text.slice(cut + 1)} (${text.slice(0, cut).split('/').pop()})`
+}
+
 // The day in local time, as a question about "yesterday" is read.
 export const dateOf = (ts: number): string => {
   const d = new Date(ts)

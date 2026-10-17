@@ -1,6 +1,6 @@
 import { NO_FIX } from '../call'
 import type { EntryKind } from '../types'
-import { fitBlocks, headOf, snippetOf } from './format'
+import { fitBlocks, headOf, snippetOf, textInLine } from './format'
 
 // A past session that hit an error, and what was done right after it.
 export type Fix = {
@@ -50,7 +50,7 @@ export const sameError = (text: string, weights: ReadonlyMap<string, number>): b
 const LABEL: Record<EntryKind, string> = { cmd: 'then ran', assistant: 'said', user: 'asked', error: 'then hit', thinking: 'thought', edit: 'changed', summary: 'summed up', call: 'called', result: 'returned', image: 'pasted' }
 
 const render = (fix: Fix, terms: readonly string[]): string =>
-  [headOf(fix), `  ${'error'.padEnd(9)} ${snippetOf(fix.error, terms, LINE_WIDTH)}`, ...fix.then.map(e => `  ${LABEL[e.kind].padEnd(9)} ${snippetOf(e.text, [], LINE_WIDTH)}`)].join('\n')
+  [headOf(fix), `  ${'error'.padEnd(9)} ${snippetOf(fix.error, terms, LINE_WIDTH)}`, ...fix.then.map(e => `  ${LABEL[e.kind].padEnd(9)} ${snippetOf(textInLine(e.kind, e.text), [], LINE_WIDTH)}`)].join('\n')
 
 export const formatFixes = (fixes: readonly Fix[], terms: readonly string[], options: { maxChars: number }): string => {
   if (fixes.length === 0) return NO_FIX

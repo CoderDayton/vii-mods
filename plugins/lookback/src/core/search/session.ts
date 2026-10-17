@@ -1,5 +1,5 @@
 import type { RecentSession, SessionSummary, StoredEntry } from '../types'
-import { dateOf, folderOf, headOf as hitHeadOf } from './format'
+import { dateOf, folderOf, headOf as hitHeadOf, textInLine } from './format'
 
 export type SessionFormatOptions = {
   // How many entries of the session come before the ones given.
@@ -24,7 +24,7 @@ const headOf = (s: SessionSummary): string => {
 }
 
 const lineOf = (e: StoredEntry, width: number): string => {
-  const flat = e.text.replace(/\s+/g, ' ').trim()
+  const flat = textInLine(e.kind, e.text).replace(/\s+/g, ' ').trim()
   return `${timeOf(e.ts)} ${e.kind.padEnd(9)} ${flat.length <= width ? flat : `${flat.slice(0, width).trimEnd()}${ELLIPSIS}`}`
 }
 

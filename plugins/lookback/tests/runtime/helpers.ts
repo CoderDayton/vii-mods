@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { CaptionUnavailableError } from '../../src/runtime/captions/captioner'
+import { CaptionRejectedError, CaptionUnavailableError } from '../../src/runtime/captions/captioner'
 import type { CaptionSession, CaptionSource } from '../../src/runtime/captions/captioner'
 import type { Embedder, EmbeddingRole } from '../../src/runtime/embedding/embedder'
 import { EmbeddingUnavailableError } from '../../src/runtime/embedding/embedder'
@@ -86,6 +86,7 @@ export class FakeCaptions implements CaptionSource {
   closed = 0
   seen: string[] = []
   down = false
+  unreachable = false
   readonly failing = new Set<string>()
 
   constructor(private readonly say: (bytes: string) => string = bytes => `A screenshot that reads: ${bytes}`) {}
@@ -98,7 +99,8 @@ export class FakeCaptions implements CaptionSource {
         caption: async (image: Uint8Array, media: string): Promise<string> => {
           const bytes = Buffer.from(image).toString()
           this.seen.push(`${media} ${bytes}`)
-          if (this.failing.has(bytes)) throw new CaptionUnavailableError(`cannot read ${bytes}`)
+          if (this.unreachable) throw new CaptionUnavailableError('the fake caption server is unreachable')
+          if (this.failing.has(bytes)) throw new CaptionRejectedError(`cannot read ${bytes}`)
           return this.say(bytes)
         },
       },

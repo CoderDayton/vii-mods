@@ -29,7 +29,6 @@ export const keepPaste = (dir: string, paste: Paste): KeptPaste | null => {
 
 const MEDIA = Object.fromEntries(Object.entries(IMAGE_TYPES).map(([media, ext]) => [ext, media]))
 
-// Two failures in a row mean the model or the server, not the image: the rest wait for the next run.
 const STOP_AFTER = 2
 // Entries made as captions arrive, so a run that is stopped keeps what it made.
 const PLACE_EVERY = 16
@@ -65,6 +64,10 @@ export const captionPending = async (store: Store, source: CaptionSource, report
       try {
         said = await session.captioner.caption(readFileSync(path), MEDIA[image.file.split('.').pop() ?? ''] ?? 'image/png')
       } catch (error) {
+        if (error instanceof CaptionUnavailableError) {
+          report.captionError = error.message
+          break
+        }
         store.captionFailed(image.sha)
         if (++failed < STOP_AFTER) continue
         report.captionError = error instanceof Error ? error.message : String(error)

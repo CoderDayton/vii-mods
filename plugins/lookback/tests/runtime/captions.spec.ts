@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { join } from 'node:path'
 
-import { CaptionUnavailableError, OpenAICaptioner, captionSourceFor } from '../../src/runtime/captions/captioner'
+import { CaptionRejectedError, CaptionUnavailableError, OpenAICaptioner, captionSourceFor } from '../../src/runtime/captions/captioner'
 import { startServer } from '../../src/runtime/captions/server'
 import { configFrom } from '../../src/runtime/config'
 
@@ -68,4 +68,15 @@ test('a running server named by its address is used as it is, and an unreachable
   const gone = captionSourceFor(configFrom({ HOME: '/h', LOOKBACK_CAPTION_MODEL: 'vl', LOOKBACK_CAPTION_URL: 'http://127.0.0.1:1/v1' }))!
   const session = await gone.open()
   await expect(session.captioner.caption(PNG, 'image/png')).rejects.toBeInstanceOf(CaptionUnavailableError)
+})
+
+test('a server that answers with an error has rejected the image, not gone away', async () => {
+  const server = Bun.serve({ port: 0, fetch: () => Response.json({ error: { message: 'image too large' } }, { status: 400 }) })
+  try {
+    const caption = new OpenAICaptioner({ baseURL: `http://127.0.0.1:${server.port}/v1`, model: 'vl' }).caption(PNG, 'image/png')
+    await expect(caption).rejects.toBeInstanceOf(CaptionRejectedError)
+    await expect(caption).rejects.toThrow('image too large')
+  } finally {
+    await server.stop(true)
+  }
 })

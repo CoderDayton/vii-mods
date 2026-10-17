@@ -70,8 +70,11 @@ const jobsFor = (store: Store, files: readonly TranscriptFile[]): Job[] => {
 export const indexAll = async (store: Store, options: IndexOptions): Promise<IndexReport> => {
   const report = emptyReport()
   await readTranscripts(store, options, report)
-  if (options.captions != null) await captionPending(store, options.captions, report)
   if (options.embedder !== null) await embedPending(store, options.embedder, options, report)
+  if (options.captions != null) {
+    await captionPending(store, options.captions, report)
+    if (options.embedder !== null && report.images > 0 && report.embeddingError === null) await embedPending(store, options.embedder, options, report)
+  }
   return report
 }
 
