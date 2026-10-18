@@ -32,7 +32,7 @@ Install whichever mods you want:
 /plugin install cues@vii-mods
 ```
 
-Each mod works alone. They need a Claude Code build with mods turned on; what else a mod needs is listed in its section.
+Each mod works alone. They need a Claude Code build with mods turned on; what else a mod needs is listed in its section. What changed in each mod, newest first, is in the [changelog](CHANGELOG.md).
 
 ---
 
