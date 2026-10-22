@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { cleanCaption } from '../../src/runtime/images'
 import { indexAll, refreshSession } from '../../src/runtime/indexer'
 import { searchPast } from '../../src/runtime/search'
 import { Store } from '../../src/runtime/store/store'
@@ -216,4 +217,12 @@ test('forgetting a session deletes the images only it held', async () => {
   store.forget('s1', Date.now())
   expect(existsSync(alone!.path)).toBe(false)
   expect(existsSync(shared!.path)).toBe(true)
+})
+
+test('a stray </think> is removed and the text on both sides of it is kept', () => {
+  expect(cleanCaption('A red button.\n</think>\n\nText: Go')).toBe('A red button.\n\nText: Go')
+  expect(cleanCaption('A red button.\n</think>')).toBe('A red button.')
+  expect(cleanCaption('</think>\nA red button. </think> Text: Go')).toBe('A red button.  Text: Go')
+  expect(cleanCaption('A red button.</think>Text: Go')).toBe('A red button. Text: Go')
+  expect(cleanCaption('A red button.')).toBe('A red button.')
 })

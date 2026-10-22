@@ -35,8 +35,12 @@ const PLACE_EVERY = 16
 
 export type CaptionReport = { images: number; captionError: string | null }
 
+const THINK_END = '</think>'
+
+const answerOf = (text: string): string => text.replaceAll(`\n${THINK_END}\n`, '\n').replace(/(\S)<\/think>(\S)/g, '$1 $2').replaceAll(THINK_END, '')
+
 // A caption as stored: a loop cut off, any secret on screen redacted, and no longer than an entry.
-export const cleanCaption = (text: string): string => redact(cutLoop(text).trim()).slice(0, MAX_ENTRY_CHARS - 300)
+export const cleanCaption = (text: string): string => redact(cutLoop(answerOf(text)).trim()).slice(0, MAX_ENTRY_CHARS - 300)
 
 // Captions the images that pastes wait on, then gives each paste its entry. The source is opened only when
 // some image has no caption, so a run with none starts no server.

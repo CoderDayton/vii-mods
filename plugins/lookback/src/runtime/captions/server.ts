@@ -32,7 +32,7 @@ const tailOf = (stream: ReadableStream<Uint8Array>): (() => string) => {
   return () => tail.trim()
 }
 
-const isReady = async (url: string): Promise<boolean> => {
+export const isReady = async (url: string): Promise<boolean> => {
   try {
     return (await fetch(url, { signal: AbortSignal.timeout(1000) })).ok
   } catch {

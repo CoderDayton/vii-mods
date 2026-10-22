@@ -28,6 +28,7 @@ const world = (on: Parameters<typeof mock.clock>[0]) => {
     err: '',
     code: 0,
     bunMissing: false,
+    hold: null as Promise<void> | null,
     // What the engine answers a Bash call with.
     bash: { result: { stdout: 'ok' }, text: 'ok' } as Record<string, unknown>,
   }
@@ -35,13 +36,14 @@ const world = (on: Parameters<typeof mock.clock>[0]) => {
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'me' }))
   on('fs.exists', () => ({ value: w.installed }) as never)
-  on('process.run', (_$, e) => {
+  on('process.run', async (_$, e) => {
     if (e.argv[2] === 'recent') {
       w.digests.push({ argv: e.argv })
       return { value: { exitCode: 0, stdout: w.recent, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } as never
     }
     w.calls.push({ argv: e.argv, cwd: e.init?.cwd, env: e.init?.env })
     if (w.bunMissing) return { deny: 'spawn bun ENOENT' } as never
+    if (w.hold !== null) await w.hold
     const isInstall = e.argv[1] === 'install'
     const stdout = isInstall ? '' : w.out
     return { value: { exitCode: isInstall ? 0 : w.code, stdout, stderr: w.err, isStdoutTruncated: false, isStderrTruncated: false } } as never
@@ -59,6 +61,8 @@ const world = (on: Parameters<typeof mock.clock>[0]) => {
     w.submitted.push({ text: e.text, context: e.context ?? [] })
     return { text: e.text, context: e.context }
   })
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('ui.toast', (_$, e) => {
     w.toasts.push(e.text)
     return { value: undefined }
@@ -471,4 +475,96 @@ test('the recall of a prompt can be switched off', { options: { autoRecall: fals
   w.calls.length = 0
   await ask($, LONG)
   expect(cli(w)).toEqual([])
+})
+
+const CAPTIONS = { captionServer: 'llama-server -m v.gguf' }
+const PASTED = [{ type: 'image' as const, mediaType: 'image/png' }]
+
+const askWith = async ($: Engine, attachments?: unknown) => {
+  await $.prompt.submit({ text: 'what is this', wait: false, origin: COMPOSER, attachments } as never)
+  await $.turn.start({ text: 'what is this', turnId: 't1' })
+  await new Promise(resolve => setTimeout(resolve, 900))
+  await settle()
+}
+
+test('a prompt with a pasted image starts a caption run that waits for a run already going', { options: CAPTIONS }, async ($, on) => {
+  const w = world(on)
+  await askWith($, PASTED)
+  expect(cli(w).map(c => c.argv.slice(2))).toEqual([['index', '--quiet', '--wait']])
+})
+
+test('with captions off, a pasted image starts no caption run', async ($, on) => {
+  const w = world(on)
+  await askWith($, PASTED)
+  expect(cli(w)).toEqual([])
+})
+
+test('a prompt with no image starts no caption run', { options: CAPTIONS }, async ($, on) => {
+  const w = world(on)
+  await askWith($)
+  await askWith($, [{ type: 'document' }])
+  expect(cli(w)).toEqual([])
+})
+
+test('the caption run is off when automatic index runs are', { options: { ...CAPTIONS, autoIndex: false } }, async ($, on) => {
+  const w = world(on)
+  await askWith($, PASTED)
+  expect(cli(w)).toEqual([])
+})
+
+test('images pasted while a caption run is going get one more run after it, not one each', { options: CAPTIONS }, async ($, on) => {
+  const w = world(on)
+  let release = () => {}
+  w.hold = new Promise<void>(resolve => (release = resolve))
+  await askWith($, PASTED)
+  await askWith($, PASTED)
+  await askWith($, PASTED)
+  expect(cli(w)).toHaveLength(1)
+  w.hold = null
+  release()
+  for (let i = 0; i < 20; i++) await settle()
+  expect(cli(w)).toHaveLength(2)
+})
+
+test('an image prompt is captioned once, on its own turn only', { options: CAPTIONS }, async ($, on) => {
+  const w = world(on)
+  await askWith($, PASTED)
+  await $.turn.start({ text: 'next', turnId: 't2' })
+  await settle()
+  expect(cli(w)).toHaveLength(1)
+})
+
+const finish = async ($: Engine, turnId = 't1') => {
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId, reason: 'end_turn' } as never)
+  for (let i = 0; i < 20; i++) await settle()
+}
+
+test('a run that captioned nothing is tried again when the turn ends, since the image may not have been in the transcript yet', { options: CAPTIONS }, async ($, on) => {
+  const w = world(on)
+  w.out = 'Nothing new: the index is up to date.'
+  await askWith($, PASTED)
+  expect(cli(w)).toHaveLength(1)
+  await finish($)
+  expect(cli(w).map(c => c.argv.slice(2))).toEqual([['index', '--quiet', '--wait'], ['index', '--quiet', '--wait']])
+  await finish($, 't2')
+  expect(cli(w)).toHaveLength(2)
+})
+
+test('a run that captioned an image is also tried again when the turn ends, since that image may be an older one', { options: CAPTIONS }, async ($, on) => {
+  const w = world(on)
+  w.out = 'Read 1 transcript in 20 ms: 1 new entry, 1 image caption, 1 vector.'
+  await askWith($, PASTED)
+  await finish($)
+  expect(cli(w)).toHaveLength(2)
+})
+
+test('the caption run waits a moment after the turn starts, for the prompt to reach the transcript', { options: CAPTIONS }, async ($, on) => {
+  const w = world(on)
+  await $.prompt.submit({ text: 'what is this', wait: false, origin: COMPOSER, attachments: PASTED } as never)
+  await $.turn.start({ text: 'what is this', turnId: 't1' })
+  await settle()
+  expect(cli(w)).toHaveLength(0)
+  await new Promise(resolve => setTimeout(resolve, 1000))
+  await settle()
+  expect(cli(w)).toHaveLength(1)
 })

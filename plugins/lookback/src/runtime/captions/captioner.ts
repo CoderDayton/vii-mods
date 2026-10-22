@@ -1,8 +1,10 @@
+import { dirname, join } from 'node:path'
+
 import type OpenAI from 'openai'
 
 import type { CaptionConfig, Config } from '../config'
 import { CaptionRejectedError, CaptionUnavailableError } from './errors'
-import { startServer } from './server'
+import { KEEP_MS, leaseServer } from './keeper'
 
 export interface Captioner {
   caption(image: Uint8Array, media: string): Promise<string>
@@ -18,8 +20,8 @@ export interface CaptionSource {
 
 export { CaptionRejectedError, CaptionUnavailableError }
 
-// Plain transcription: a prompt that asks for sections makes small models fill them with guesses.
-const PROMPT = 'Transcribe all visible text in this image, exactly as written. Then say in one line what app or page this is.'
+const PROMPT =
+  'Describe the image in a few plain sentences, then transcribe all visible text exactly as written. Do not guess the name of a game, app, or brand unless it is written in the image.'
 const MAX_TOKENS = 400
 // The first request waits for the model to load.
 const TIMEOUT_MS = 120_000
@@ -60,16 +62,37 @@ export class OpenAICaptioner implements Captioner {
   }
 }
 
-// The caption source the settings name, or null when captions are off. A server command is started for the
-// run and stopped after it; a model alone is asked for at the caption address.
-export const captionSourceFor = (config: Config): CaptionSource | null => {
+export const captionSourceFor = (config: Config, keepMs = KEEP_MS): CaptionSource | null => {
   const c: CaptionConfig = config.caption
   if (c.server !== '') {
+    const options = { command: c.server, statePath: join(dirname(config.databasePath), 'caption-server.json'), idleMs: keepMs }
     return {
       kind: 'server',
       open: async () => {
-        const server = await startServer(c.server)
-        return { captioner: new OpenAICaptioner({ baseURL: server.baseURL, model: c.model || 'local' }), close: () => server.stop() }
+        let held = await leaseServer(options)
+        let inner = new OpenAICaptioner({ baseURL: held.baseURL, model: c.model || 'local' })
+        const captioner: Captioner = {
+          async caption(image, media) {
+            const beat = setInterval(() => held.touch(), 5000)
+            try {
+              held.touch()
+              const said = await inner.caption(image, media)
+              held.touch()
+              return said
+            } catch (error) {
+              const timedOut = (error as { cause?: { name?: string } }).cause?.name === 'APIConnectionTimeoutError'
+              if (!(error instanceof CaptionUnavailableError) || timedOut) throw error
+              held = await leaseServer(options)
+              inner = new OpenAICaptioner({ baseURL: held.baseURL, model: c.model || 'local' })
+              const said = await inner.caption(image, media)
+              held.touch()
+              return said
+            } finally {
+              clearInterval(beat)
+            }
+          },
+        }
+        return { captioner, close: async () => void held.touch() }
       },
     }
   }

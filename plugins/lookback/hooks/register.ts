@@ -29,7 +29,10 @@ const DIGEST_LIMIT = 5
 // A file's note waits at most this long, and one call names at most this many files.
 const NOTE_MS = 3000
 const NOTE_FILES = 2
+const TRANSCRIPT_MS = 800
 const NO_BUN = 'lookback could not run. Is bun installed?'
+
+const wait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
 type Run = { code: number; out: string; err: string }
 
@@ -51,10 +54,10 @@ const ensurePackages = async ($: Engine): Promise<void> => {
 }
 
 // Brings the index up to date. It never throws: a failure becomes one toast.
-const refreshIndex = async ($: Engine, options: Options): Promise<void> => {
+const refreshIndex = async ($: Engine, options: Options, wait = false): Promise<void> => {
   try {
     await ensurePackages($)
-    const run = await lookback($, options, ['index', '--quiet'], INDEX_MS)
+    const run = await lookback($, options, wait ? ['index', '--quiet', '--wait'] : ['index', '--quiet'], INDEX_MS)
     if (run.code !== 0) {
       await $.ui.toast(`lookback: indexing failed: ${run.err || `exit ${run.code}`}`)
       return
@@ -63,6 +66,24 @@ const refreshIndex = async ($: Engine, options: Options): Promise<void> => {
     if (captions !== null) await $.ui.toast(captions)
   } catch {
     await $.ui.toast('lookback: could not run bun, so past sessions are not indexed. Install bun from bun.sh.')
+  }
+}
+
+type Captioning = { running: boolean; again: boolean }
+
+const captionImages = async ($: Engine, options: Options, state: Captioning): Promise<void> => {
+  if (state.running) {
+    state.again = true
+    return
+  }
+  state.running = true
+  try {
+    do {
+      state.again = false
+      await refreshIndex($, options, true)
+    } while (state.again)
+  } finally {
+    state.running = false
   }
 }
 
@@ -108,6 +129,10 @@ export const register: Register = (on, raw) => {
   const lookedUp = new Set<string>()
   // The files already noted in this session: a file is noted on its first touch only.
   const noted = new Set<string>()
+  const captionsOn = options.autoIndex && (options.captionServer !== '' || options.captionModel !== '')
+  let imagesWaiting = false
+  let imagesRecheck = false
+  const captioning = { running: false, again: false }
 
   on('session.start', async ($, e, next) => {
     folder = e.cwd
@@ -181,7 +206,27 @@ export const register: Register = (on, raw) => {
     }
   }).catch(() => ({ text: 'lookback could not answer the command.' }))
 
+  on('turn.start', async ($, e, next) => {
+    if (imagesWaiting) {
+      imagesWaiting = false
+      imagesRecheck = true
+      void wait(TRANSCRIPT_MS)
+        .then(() => captionImages($, options, captioning))
+        .catch(() => {})
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('turn.complete', async ($, e, next) => {
+    if (imagesRecheck) {
+      imagesRecheck = false
+      void captionImages($, options, captioning).catch(() => {})
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   on('prompt.submit', async ($, e, next) => {
+    if (captionsOn && e.attachments?.some(a => a.type === 'image') === true) imagesWaiting = true
     if (!options.autoRecall || e.origin.kind !== 'composer') return next(e)
     try {
       const me = await $.session.id()
