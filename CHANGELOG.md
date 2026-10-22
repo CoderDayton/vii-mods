@@ -2,6 +2,17 @@
 
 All notable changes to the vii-mods marketplace are listed here, newest first, each marked with the mod it belongs to. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The mods are not versioned yet (each is 0.1.0), so changes are grouped by the date they reached GitHub. Changes not yet there are listed under Unreleased.
 
+## Unreleased
+
+### Added
+
+- **lookback:** caption a pasted image in the background when its prompt's turn starts, instead of at the next session start. The caption server stays up 60 s after the last caption and is shared by runs, so back-to-back image prompts load the model once
+
+### Changed
+
+- **lookback:** the caption prompt asks for a short description plus all visible text, and names no game, app or brand that is not written in the image
+- **lookback:** remove a stray `</think>` tag from a caption and keep the text on both sides of it
+
 ## 2026-10-17
 
 ### Added
@@ -29,26 +40,14 @@ All notable changes to the vii-mods marketplace are listed here, newest first, e
 
 ## 2026-10-13
 
+_First release of the marketplace._
+
 ### Added
 
 - **lookback:** show past work beside a prompt that asks about earlier work, newest first ([`9d8e735`])
 - **lookback:** read time words in a query, such as `yesterday`, `last week`, `since friday` and `sept 21` ([`9d8e735`])
 - **lookback:** search the current session, keep file notes per folder, and search a named folder ([`9d8e735`])
-
-### Changed
-
-- **lookback:** keep a long query's rarest words, and require two fifths of them in a keyword match ([`38ecb99`])
-
-## 2026-10-12
-
-### Added
-
 - **cues:** add the mod: key sounds from 13 recorded switches as you type, a chime when you send a prompt, a bell when the reply lands, and a low tone when a turn fails, on Linux ([`ee9bcda`])
-
-## 2026-10-11
-
-### Added
-
 - **lookback:** add the mod: search past Claude Code sessions by words and by meaning, with a SQLite index (FTS5 and sqlite-vector) and embeddings from Ollama, through a search tool, the `/lookback` command and recall beside prompts ([`e18467a`])
 - **lookback:** index thinking, shell commands, file edits and sub-agent runs, with the file tools named by `fileTools` ([`7169616`])
 - **lookback:** add the `show`, `forget`, `fix`, `how`, `blame` and `files` commands, paging, and secret redaction ([`7169616`])
@@ -58,87 +57,46 @@ All notable changes to the vii-mods marketplace are listed here, newest first, e
 - **smart-comments:** send one follow-up when a turn ends with a file that still fails, for file tools and shell edits alike ([`c25ccac`])
 - **correction-ledger:** save each rule as a task rule or a project rule, and let it run out after a set number of worked days unless it is repeated, fired or kept ([`81674b9`])
 - **correction-ledger:** send a rule about one action when a matching tool call is made. A rule that gets broken stops the call once ([`81674b9`])
-
-### Changed
-
-- **smart-comments:** keep comments that state a contract, a consequence or a unit ([`dd3cec9`])
-- **smart-comments:** shorten the note sent after an edit ([`3b17e8a`])
-
-## 2026-10-10
-
-### Changed
-
-- **fleet-board:** restyle the pane, wrap replies, and show only this project's sessions ([`a96cc74`])
-
-## 2026-10-08
-
-### Added
-
 - **fleet-board:** add the mod: list running sessions in a pane, and open a new session in a terminal window, tmux or WezTerm ([`959ca76`], [`0f8a7c0`])
 - **fleet-board:** let a boss session run a team with tools to hire, task, check and drop members ([`9218572`])
 - **fleet-board:** give each task a short id, and mark it done or blocked when a reply carries that id ([`9218572`])
 - **fleet-board:** mark a member ready once its transcript shows a reply after the briefing, and wake the boss when replies arrive ([`0f8a7c0`], [`9218572`])
 - **fleet-board:** keep the team in the plugin store, and tell each session in its prompt whether it is a boss or an employee ([`0f8a7c0`])
-
-### Changed
-
-- **fleet-board (breaking):** make the pane read-only. The boss session runs the team through its tools ([`9218572`])
-
-## 2026-10-07
-
-### Added
-
 - **correction-ledger:** add the mod: turn a correction into a standing rule for the project, with a model check. A repeat adds a strike, and struck rules are sent first and louder ([`4c66d01`])
 - **gpu-lock:** add shared mode: several GPU jobs run together while their memory stays under a limit ([`ae1d086`])
 - **gpu-lock:** queue waiting jobs first in, first out ([`ae1d086`])
 - **gpu-lock:** chart memory per card in the pane, from one history file that every session reads, stacked per job ([`ae1d086`])
 - **rescribe:** keep the original draft in the Up-arrow history, so Up brings it back ([`3d8235f`])
+- **rescribe:** add the mod: rewrite the draft in the prompt box with a shortcut and one model call, Haiku on high effort by default ([`02b102b`], [`c27c32f`])
+- **rescribe:** review the rewrite as a diff in a docked or inline pane, with Apply and Dismiss ([`c27c32f`])
+- **rescribe:** add the `autoAccept` option ([`c27c32f`])
+- **rescribe:** refuse a rewrite that grew past 2.5 times the draft or shares under 30% of its words, and name the reason in a toast ([`c27c32f`])
+- **gpu-lock:** add the mod: run GPU commands one at a time under a `flock` lock, after checking free GPU memory ([`d93ff7d`])
+- **gpu-lock:** close the `/gpu` pane with its Close button, with `/gpu` again, with `/gpu close`, or with Escape ([`d4b33d1`])
+- **dictation-repair:** add the mod, renamed prompt-repair the same day: one Haiku prompt fixes misheard words, wrong words and self-corrections, with glossary hits added, and a menu above the prompt sends, edits or skips the fix ([`24cca8f`], [`fe68b77`])
 
 ### Changed
 
+- **lookback:** keep a long query's rarest words, and require two fifths of them in a keyword match ([`38ecb99`])
+- **smart-comments:** keep comments that state a contract, a consequence or a unit ([`dd3cec9`])
+- **smart-comments:** shorten the note sent after an edit ([`3b17e8a`])
+- **fleet-board:** restyle the pane, wrap replies, and show only this project's sessions ([`a96cc74`])
+- **fleet-board (breaking):** make the pane read-only. The boss session runs the team through its tools ([`9218572`])
 - **rescribe (breaking):** turn `autoAccept` on by default. The rewrite applies at once, and the review menu is opt-in ([`3d8235f`])
 - **gpu-lock:** redesign the band and the pane ([`ae1d086`])
 - **rescribe:** edit every sentence of the draft, and turn polite requests into instructions ([`7071a21`])
 - **rescribe:** hide the button row when there is nothing to review ([`d8c8d16`])
 
-### Fixed
-
-- **correction-ledger:** share one ledger file across sessions. A write retries when another session wrote first ([`74db581`])
-- **correction-ledger:** key rules by the git repository root, so a session started in a subfolder or a worktree shares its project's rules ([`d8b517c`])
-
-## 2026-10-06
-
-### Added
-
-- **rescribe:** add the mod: rewrite the draft in the prompt box with a shortcut and one model call, Haiku on high effort by default ([`02b102b`], [`c27c32f`])
-- **rescribe:** review the rewrite as a diff in a docked or inline pane, with Apply and Dismiss ([`c27c32f`])
-- **rescribe:** add the `autoAccept` option ([`c27c32f`])
-- **rescribe:** refuse a rewrite that grew past 2.5 times the draft or shares under 30% of its words, and name the reason in a toast ([`c27c32f`])
-
 ### Removed
 
 - **prompt-repair (breaking):** remove the mod; rescribe replaces it ([`02b102b`])
-
-### Fixed
-
-- **gpu-lock:** draw the band under the bands of other plugins instead of replacing them ([`5bdc057`])
-
-## 2026-10-05
-
-_First release of the marketplace._
-
-### Added
-
-- **gpu-lock:** add the mod: run GPU commands one at a time under a `flock` lock, after checking free GPU memory ([`d93ff7d`])
-- **gpu-lock:** close the `/gpu` pane with its Close button, with `/gpu` again, with `/gpu close`, or with Escape ([`d4b33d1`])
-- **dictation-repair:** add the mod, renamed prompt-repair the same day: one Haiku prompt fixes misheard words, wrong words and self-corrections, with glossary hits added, and a menu above the prompt sends, edits or skips the fix ([`24cca8f`], [`fe68b77`])
-
-### Removed
-
 - **gpu-lock (breaking):** remove the pane argument of `/gpu` ([`d4b33d1`])
 
 ### Fixed
 
+- **correction-ledger:** share one ledger file across sessions. A write retries when another session wrote first ([`74db581`])
+- **correction-ledger:** key rules by the git repository root, so a session started in a subfolder or a worktree shares its project's rules ([`d8b517c`])
+- **gpu-lock:** draw the band under the bands of other plugins instead of replacing them ([`5bdc057`])
 - **gpu-lock:** clip long GPU process names, and run `/gpu` at once ([`5d3927e`])
 
 [`55e40f3`]: https://github.com/CoderDayton/vii-mods/commit/55e40f3
