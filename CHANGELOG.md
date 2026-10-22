@@ -2,16 +2,16 @@
 
 All notable changes to the vii-mods marketplace are listed here, newest first, each marked with the mod it belongs to. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The mods are not versioned yet (each is 0.1.0), so changes are grouped by the date they reached GitHub. Changes not yet there are listed under Unreleased.
 
-## Unreleased
+## 2026-10-22
 
 ### Added
 
-- **lookback:** caption a pasted image in the background when its prompt's turn starts, instead of at the next session start. The caption server stays up 60 s after the last caption and is shared by runs, so back-to-back image prompts load the model once
+- **lookback:** caption a pasted image in the background when its prompt's turn starts, instead of at the next session start. The caption server stays up 60 s after the last caption and is shared by runs, so back-to-back image prompts load the model once ([`2e2065b`])
 
 ### Changed
 
-- **lookback:** the caption prompt asks for a short description plus all visible text, and names no game, app or brand that is not written in the image
-- **lookback:** remove a stray `</think>` tag from a caption and keep the text on both sides of it
+- **lookback:** the caption prompt asks for a short description plus all visible text, and names no game, app or brand that is not written in the image ([`2e2065b`])
+- **lookback:** remove a stray `</think>` tag from a caption and keep the text on both sides of it ([`2e2065b`])
 
 ## 2026-10-17
 
@@ -99,6 +99,7 @@ _First release of the marketplace._
 - **gpu-lock:** draw the band under the bands of other plugins instead of replacing them ([`5bdc057`])
 - **gpu-lock:** clip long GPU process names, and run `/gpu` at once ([`5d3927e`])
 
+[`2e2065b`]: https://github.com/CoderDayton/vii-mods/commit/2e2065b
 [`55e40f3`]: https://github.com/CoderDayton/vii-mods/commit/55e40f3
 [`9c1cc31`]: https://github.com/CoderDayton/vii-mods/commit/9c1cc31
 [`a76c7be`]: https://github.com/CoderDayton/vii-mods/commit/a76c7be
