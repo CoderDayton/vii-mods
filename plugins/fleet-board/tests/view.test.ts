@@ -21,7 +21,7 @@ test('a row has its number, names, state, age and role', () => {
   const rows = rowsOf(PEERS, { a: { name: 'quorum-63', dir: '/p/quorum', role: 'research', briefedAt: 1, readyAt: 2 } }, NOW, 30 * MIN)
   expect(rows[0]).toEqual({
     n: 1, id: 'a', name: 'quorum-63', folder: 'quorum', state: 'working', age: '2m', isQuiet: false, role: 'Research',
-    waiting: false, taskId: '', status: '', flag: '', last: '',
+    waiting: false, taskId: '', status: '', flag: '', last: '', taskAge: '', queued: 0,
   })
   expect(rows[2]).toMatchObject({ n: 3, folder: 'lune-voice', state: 'idle', age: '1h', role: '—' })
 })
@@ -46,6 +46,17 @@ test('a sent task is flagged asked on a question and stale after ten quiet minut
   expect(stale[0]).toMatchObject({ status: 'sent', flag: 'stale' })
   const fresh = rowsOf(PEERS, { a: hire({ id: 'k3x9qa', sentAt: NOW - 20 * MIN, status: 'sent', last: 'working', lastAt: NOW - 9 * MIN }) }, NOW, 30 * MIN)
   expect(fresh[0]).toMatchObject({ status: 'sent', flag: '' })
+})
+
+test('a row carries how long its sent task has run and how many tasks wait in its queue', () => {
+  const hire = {
+    name: 'quorum-63', dir: '/p/quorum', role: 'research' as const, briefedAt: 1, readyAt: 2,
+    task: { id: 'k3x9qa', sentAt: NOW - 12 * MIN, status: 'sent' as const },
+    queue: [{ id: 'b2b2b2', text: 'Next.', queuedAt: 1 }],
+  }
+  expect(rowsOf(PEERS, { a: hire }, NOW, 30 * MIN)[0]).toMatchObject({ taskAge: '12m', queued: 1 })
+  const done = { ...hire, task: { ...hire.task, status: 'done' as const } }
+  expect(rowsOf(PEERS, { a: done }, NOW, 30 * MIN)[0]).toMatchObject({ taskAge: '', queued: 1 })
 })
 
 test('a team member that has not replied yet is marked waiting', () => {
@@ -173,6 +184,40 @@ test('the team section is left out when nobody is on the team, and notes only wh
   expect(titles).toEqual(['other sessions'])
   expect(frameOf(rows, NOTES, 80).sections.map(s => s.title)).toEqual(['other sessions', 'notes'])
 })
+
+test('the first line of each team member is pressable, keyed by its session id', () => {
+  const team = frameOf(busyRows(), [], 80).sections.find(s => s.title === 'team')
+  expect(Object.values(team?.press ?? {})).toEqual(['a', 'b', 'c', 'd'])
+  for (const [at, id] of Object.entries(team?.press ?? {})) {
+    expect(team?.lines[Number(at)]?.map(s => s.text).join('')).toContain(busyRows().find(r => r.id === id)?.name ?? '?')
+  }
+})
+
+const DETAIL_HIRE = {
+  name: 'quorum-63', dir: '/p/quorum', role: 'research' as const, briefedAt: 1, readyAt: 2,
+  task: {
+    id: 'k3x9qa', sentAt: NOW - 12 * MIN, status: 'sent' as const, text: `Build the parser. ${'Every rule. '.repeat(12)}`,
+    scope: 'src/parser only', done: 'the tests pass', last: 'Which lexer?', lastAt: NOW - MIN,
+  },
+  queue: [{ id: 'b2b2b2', text: 'Review it.', after: 'zz9zz9', queuedAt: 1 }],
+  history: [{ id: 'a1a1a1', sentAt: 0, status: 'done' as const, text: 'Set up.', endedAt: 4 * MIN }],
+}
+
+for (const columns of [60, 80, 120]) {
+  test(`at ${columns} columns a member's detail shows its brief, reply, queue and earlier tasks, and a back button`, () => {
+    const rows = rowsOf(PEERS, { a: DETAIL_HIRE }, NOW, 30 * MIN)
+    const frame = frameOf(rows, NOTES, columns, { detail: { row: rows[0]!, hire: DETAIL_HIRE, now: NOW } })
+    expect(frame.sections.map(s => s.title)).toEqual(['quorum-63'])
+    const lines = textOf(frame, columns)
+    expect(Math.max(...lines.map(l => l.length))).toBeLessThanOrEqual(columns)
+    const text = lines.join('\n')
+    for (const word of ['Research', 'working', 'k3x9qa', 'sent', '12m', 'Build the parser.', 'src/parser only', 'the tests pass', 'Which lexer?', 'b2b2b2', 'after zz9zz9', 'Review it.', 'a1a1a1', 'done in 4m', '[ back ]']) {
+      expect(text).toContain(word)
+    }
+    expect(text.replace(/[│ \n]+/g, ' ')).toContain(`Build the parser. ${'Every rule. '.repeat(12)}`.trim())
+    expect(text).not.toContain('mnemos-9e')
+  })
+}
 
 test('with no other sessions the pane says so in one line', () => {
   const text = textOf(frameOf([], [], 80), 80).join('\n')

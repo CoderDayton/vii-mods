@@ -29,11 +29,28 @@ export const TOOL_SPECS = [
   },
   {
     name: 'fleet_task',
-    description: 'Send one task to a member of your team. The member must be on the team. Its reply is read with fleet_status.',
+    description:
+      'Send one task to a member of your team. A member works one task at a time: a task for a busy member, or one whose after task is not done, is queued and sent when it can be. Its reply is read with fleet_status.',
     inputSchema: {
       type: 'object',
-      properties: { session: SESSION, text: { type: 'string', description: 'The task: the goal, the area, and what done looks like.' } },
+      properties: {
+        session: SESSION,
+        text: { type: 'string', description: 'The goal: what to do and why.' },
+        scope: { type: 'string', description: 'What to touch and what to leave alone.' },
+        done: { type: 'string', description: 'What done looks like: the check that proves it.' },
+        after: { type: 'string', description: 'A task id on the team that must be done before this task is sent.' },
+      },
       required: ['session', 'text'],
+    },
+    isDeferred: false,
+  },
+  {
+    name: 'fleet_cancel',
+    description: 'Cancel a member\'s open task and tell it, or take a queued task off its queue. The next queued task is then sent.',
+    inputSchema: {
+      type: 'object',
+      properties: { session: SESSION, task: { type: 'string', description: 'The task id; the open task when left out.' } },
+      required: ['session'],
     },
     isDeferred: false,
   },
@@ -68,6 +85,14 @@ const argOf = (input: Readonly<Record<string, unknown>>, key: string): string =>
   return typeof value === 'string' ? value.trim() : ''
 }
 
+const optionalArg = (input: Readonly<Record<string, unknown>>, key: string): Record<string, string> => {
+  const value = argOf(input, key)
+  return value === '' ? {} : { [key]: value }
+}
+
+const hasTask = (roster: Readonly<Record<string, Hire>>, id: string): boolean =>
+  Object.values(roster).some(h => h.task?.id === id || (h.queue ?? []).some(q => q.id === id) || (h.history ?? []).some(t => t.id === id))
+
 // Runs one fleet tool. Bad input returns an error text and changes nothing. A throw becomes an error text that names
 // the tool and the message.
 export const runTool = async (name: ToolName, input: Readonly<Record<string, unknown>>, deps: ToolDeps): Promise<ToolReply> => {
@@ -90,6 +115,8 @@ const dispatch = async (name: ToolName, input: Readonly<Record<string, unknown>>
   if (name === 'fleet_hire' && roleOf(role) === undefined) return reply(`unknown role "${role}"; use ${ROLE_LIST}`, true)
   const text = name === 'fleet_task' ? argOf(input, 'text') : ''
   if (name === 'fleet_task' && text === '') return reply('type the task first', true)
+  const after = name === 'fleet_task' ? argOf(input, 'after') : ''
+  if (after !== '' && !hasTask(await deps.roster(), after)) return reply(`no task ${after} on the team`, true)
 
   const session = argOf(input, 'session')
   if (session === '') return reply('name a session: its number, its name or its folder name', true)
@@ -109,10 +136,13 @@ const dispatch = async (name: ToolName, input: Readonly<Record<string, unknown>>
     const out = await fleet.drop(peer)
     return reply(out.text, !out.ok)
   }
-  const member = (await deps.roster())[peer.id]
-  if (member === undefined) return reply(`${peer.name} is not on the team; hire it first with fleet_hire`, true)
-  if (member.task?.status === 'sent') return reply(`task ${member.task.id} is still open`, true)
-  const out = await fleet.task(peer, text)
+  if (name === 'fleet_cancel') {
+    const task = argOf(input, 'task')
+    const out = await fleet.cancel(peer, task === '' ? undefined : task)
+    return reply(out.text, !out.ok)
+  }
+  if ((await deps.roster())[peer.id] === undefined) return reply(`${peer.name} is not on the team; hire it first with fleet_hire`, true)
+  const out = await fleet.task(peer, { text, ...optionalArg(input, 'scope'), ...optionalArg(input, 'done'), ...optionalArg(input, 'after') })
   return reply(out.text, !out.ok)
 }
 

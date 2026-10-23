@@ -2,7 +2,7 @@ import { baseName, fmtAge } from './peers'
 import type { Peer, PeerState } from './peers'
 import { roleOf } from './roles'
 import type { Hire, Note } from './fleet'
-import { quietSince, STALE_MS } from './team'
+import { endedIn, quietSince, STALE_MS } from './team'
 import { isQuestion, lineOf } from './transcript'
 import type { Task, TaskStatus } from '../types'
 
@@ -24,6 +24,8 @@ export type Row = {
   status: TaskStatus | ''
   flag: Flag
   last: string
+  taskAge: string
+  queued: number
 }
 
 const roleText = (hire: Hire | undefined): string => (hire === undefined ? undefined : roleOf(hire.role)?.label) ?? '—'
@@ -54,6 +56,8 @@ export const rowsOf = (peers: readonly Peer[], roster: Readonly<Record<string, H
       status: hire?.task?.status ?? '',
       flag: flagOf(hire?.task, now),
       last: hire?.task?.last ?? '',
+      taskAge: hire?.task?.status === 'sent' ? fmtAge(now - hire.task.sentAt) : '',
+      queued: hire?.queue?.length ?? 0,
     }
   })
 
@@ -69,13 +73,16 @@ export const headline = (rows: readonly Row[]): string => {
 export type Tone = 'plain' | 'bold' | 'dim' | 'success' | 'error' | 'warning'
 export type Seg = { text: string; tone: Tone }
 export type Line = Seg[]
-export type Section = { title: string; lines: Line[] }
-export type Frame = { header: Line; sections: Section[]; footer: Line }
+export type Section = { title: string; lines: Line[]; press?: Record<number, string> }
+export type Frame = { header: Line; sections: Section[]; footer: Line; back: boolean }
+
+export type Detail = { row: Row; hire: Hire; now: number }
 
 // The Button labels. The terminal draws "[ label ]" around a label itself, so the labels carry no brackets and the
 // plain-text frame adds the one pair.
 export const REFRESH_LABEL = 'refresh'
 export const CLOSE_LABEL = 'close'
+export const BACK_LABEL = 'back'
 
 // The pane Box: a border and a padding of 1 on each side. A section Box inside it has the same.
 const PANE_CHROME = 4
@@ -134,7 +141,7 @@ const capped = (lines: string[], cap: number): string[] => {
   return [...lines.slice(0, cap), `... ${left} more ${left === 1 ? 'line' : 'lines'}`]
 }
 
-const wordTone: Record<string, Tone> = { done: 'success', blocked: 'error', asked: 'warning', stale: 'warning', sent: 'plain' }
+const wordTone: Record<string, Tone> = { done: 'success', blocked: 'error', asked: 'warning', stale: 'warning', sent: 'plain', cancelled: 'dim' }
 
 // A team member: the state word first, then the name, role and task id, with the first line of its reply under it.
 const memberLines = (r: Row, width: number): Line[] => {
@@ -142,7 +149,10 @@ const memberLines = (r: Row, width: number): Line[] => {
   const head: Line = [
     seg(word.padEnd(WORD), wordTone[word] ?? 'dim'),
     seg(r.name, 'bold'),
-    seg(`  ${r.role}, ${r.waiting ? 'waiting' : 'ready'}${r.taskId === '' ? '' : `  task ${r.taskId}`}`, 'dim'),
+    seg(
+      `  ${r.role}, ${r.waiting ? 'waiting' : 'ready'}, ${r.state}${r.taskId === '' ? '' : `  task ${r.taskId}`}${r.taskAge === '' ? '' : ` ${r.taskAge}`}${r.queued === 0 ? '' : `  ${r.queued} queued`}`,
+      'dim',
+    ),
   ]
   const reply = r.last === '' ? [] : capped(wrap(r.last, width - WORD), REPLY_LINES)
   return [fit(head, width), ...reply.map(text => fit([seg(' '.repeat(WORD) + text, 'dim')], width))]
@@ -176,6 +186,41 @@ const tableLines = (rows: readonly Row[], width: number): Line[] => {
   ]
 }
 
+const LABEL = 11
+
+const field = (label: string, text: string, width: number, cap = REPLY_LINES): Line[] =>
+  capped(wrap(text, width - LABEL), cap).map((line, i) => [seg((i === 0 ? label : '').padEnd(LABEL), 'dim'), seg(line)])
+
+const detailLines = ({ row, hire, now }: Detail, width: number): Line[] => {
+  const task = hire.task
+  const state = field('state', `${row.role}, ${row.waiting ? 'waiting' : 'ready'}, ${row.state}`, width)
+  if (task === undefined) return [...state, ...field('task', 'none', width), ...queueFields(hire, width)]
+  return [
+    ...state,
+    [
+      seg('task'.padEnd(LABEL), 'dim'),
+      seg(task.id),
+      seg(`  ${task.status}`, wordTone[task.status] ?? 'plain'),
+      seg(row.flag === '' ? '' : `  ${row.flag}`, wordTone[row.flag] ?? 'plain'),
+      seg(task.status === 'sent' ? `  ${fmtAge(now - task.sentAt)}` : '', 'dim'),
+    ],
+    ...(task.text === undefined ? [] : field('goal', task.text, width)),
+    ...(task.scope === undefined ? [] : field('scope', task.scope, width)),
+    ...(task.done === undefined ? [] : field('done when', task.done, width)),
+    ...(task.last === undefined ? [] : field('reply', task.last, width)),
+    ...queueFields(hire, width),
+  ].map(line => fit(line, width))
+}
+
+const queueFields = (hire: Hire, width: number): Line[] => [
+  ...(hire.queue ?? []).flatMap((q, i) =>
+    field(i === 0 ? 'queued' : '', `${q.id}${q.after === undefined ? '' : ` after ${q.after}`}: ${q.text}`, width, NOTE_LINES),
+  ),
+  ...(hire.history ?? []).flatMap((t, i) =>
+    field(i === 0 ? 'earlier' : '', `${t.id} ${endedIn(t)}${t.text === undefined ? '' : `: ${t.text}`}`, width, NOTE_LINES),
+  ),
+]
+
 const NOTE_WORD = 7
 
 // A note: ok or failed first, then its text wrapped under it.
@@ -185,22 +230,37 @@ const noteLines = (n: Note, width: number): Line[] =>
     seg(text, 'dim'),
   ])
 
-export const frameOf = (rows: readonly Row[], notes: readonly Note[], columns: number): Frame => {
+const teamSection = (team: readonly Row[], width: number): Section => {
+  const lines: Line[] = []
+  const press: Record<number, string> = {}
+  for (const r of team) {
+    if (lines.length > 0) lines.push([])
+    press[lines.length] = r.id
+    lines.push(...memberLines(r, width))
+  }
+  return { title: 'team', lines, press }
+}
+
+export const frameOf = (rows: readonly Row[], notes: readonly Note[], columns: number, view: { detail?: Detail } = {}): Frame => {
   const width = bodyColumns(columns)
   const edge = Math.max(MIN_BODY, columns - PANE_CHROME)
+  const header = fit([seg('fleet', 'bold'), seg(`  ${headline(rows)}`, 'dim')], edge)
+  const buttons = `[ ${REFRESH_LABEL} ]  [ ${CLOSE_LABEL} ]  `
+  if (view.detail !== undefined) {
+    return {
+      header,
+      sections: [{ title: view.detail.row.name, lines: detailLines(view.detail, width) }],
+      footer: fit([seg(`[ ${BACK_LABEL} ]  ${buttons}`), seg('esc closes', 'dim')], edge),
+      back: true,
+    }
+  }
   const team = rows.filter(r => r.role !== '—')
   const others = rows.filter(r => r.role === '—')
   const sections: Section[] = []
-  if (team.length > 0) {
-    sections.push({ title: 'team', lines: team.flatMap((r, i) => (i === 0 ? memberLines(r, width) : [[], ...memberLines(r, width)])) })
-  }
+  if (team.length > 0) sections.push(teamSection(team, width))
   sections.push({ title: 'other sessions', lines: others.length > 0 ? tableLines(others, width) : [[seg('no other sessions', 'dim')]] })
   if (notes.length > 0) sections.push({ title: 'notes', lines: notes.flatMap(n => noteLines(n, width)) })
-  return {
-    header: fit([seg('fleet', 'bold'), seg(`  ${headline(rows)}`, 'dim')], edge),
-    sections,
-    footer: fit([seg(`[ ${REFRESH_LABEL} ]  [ ${CLOSE_LABEL} ]  `), seg('esc closes', 'dim')], edge),
-  }
+  return { header, sections, footer: fit([seg(buttons), seg('esc closes', 'dim')], edge), back: false }
 }
 
 const plain = (line: Line): string => line.map(s => s.text).join('')

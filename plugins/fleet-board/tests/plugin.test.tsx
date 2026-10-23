@@ -31,6 +31,7 @@ const world = (on: Parameters<typeof mock.clock>[0], seed: Record<string, unknow
     opened: [] as Array<{ id: string; title?: string }>,
     toasts: [] as string[],
     panes: [] as string[],
+    statuses: [] as Array<string | undefined>,
     refuse: false,
     transcripts: {} as Record<string, string>,
     transcriptReads: 0,
@@ -87,6 +88,10 @@ const world = (on: Parameters<typeof mock.clock>[0], seed: Record<string, unknow
   on('ui.panes', () => ({ value: w.panes.map(id => ({ id })) }) as never)
   on('ui.toast', (_$, e) => {
     w.toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('ui.status', (_$, e) => {
+    w.statuses.push(e.text)
     return { value: undefined }
   })
   return w
@@ -163,18 +168,22 @@ test('the pane shows each session with its flags', async ($, on) => {
   await ui.unmount()
 })
 
-test('the pane has no write actions: no input, no select, and only Refresh and Close as buttons', async ($, on) => {
-  world(on, TEAM)
+test('the pane has no write actions: no input, no select, and only Refresh, Close and a row per member as buttons', async ($, on) => {
+  const w = world(on, TEAM)
   await $.session.start(LIVE)
   await run($, '')
   const ui = await pane($)
   expect(await ui.find({ type: 'Input' })).toBeUndefined()
   expect(await ui.find({ type: 'Select' })).toBeUndefined()
-  for (const action of [/Ping/, /Hire/, /Stop/, /Drop/, /Disband/, /New session/, /Open/]) {
+  for (const action of [/Ping/, /Hire/, /Stop/, /Drop/, /Disband/, /New session/, /Open/, /Cancel/]) {
     expect(await ui.find({ type: 'Button', text: action })).toBeUndefined()
   }
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['member:q1', 'refresh', 'close'])
   expect(await ui.find({ type: 'Button', text: /^refresh$/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', text: /^close$/ })).toBeDefined()
+  const sent = w.sent.length
+  await ui.press({ key: 'member:q1' })
+  expect(w.sent.length).toBe(sent)
   // The terminal draws "[ label ]" around a Button label, so a label with brackets of its own would show two pairs.
   expect(await ui.find({ type: 'Button', text: /[\[\]]/ })).toBeUndefined()
   await ui.unmount()
@@ -246,23 +255,100 @@ test('fleet_task sends the task from the boss and tracks its id on the team', as
   await $.session.start(LIVE)
   await tool($, 'fleet_hire', { session: 'quorum', role: 'research' })
   const out = await tool($, 'fleet_task', { session: 'quorum', text: 'Add tests for the parser.' })
-  expect(out).toEqual({ text: 'sent quorum-63 a task', isError: false })
-  expect(w.sent.at(-1)?.text).toMatch(/^Task from claude-mods-1c \(id [a-z0-9]{6}\): Add tests for the parser\.\n/)
+  expect(out.isError).toBe(false)
+  expect(out.text).toMatch(/^sent quorum-63 task [a-z0-9]{6}$/)
+  expect(w.sent.at(-1)?.text).toMatch(/^Task from claude-mods-1c \(id [a-z0-9]{6}\)\nGoal: Add tests for the parser\.\n/)
   expect((await tool($, 'fleet_status')).text).toMatch(/ {2}task [a-z0-9]{6}: sent/)
 })
 
-test('fleet_task is refused while the member\'s task is still open, and allowed once it is done', async ($, on) => {
+test('fleet_task passes the scope and the done condition on to the member', async ($, on) => {
   const w = world(on, TEAM)
   await $.session.start(LIVE)
-  await tool($, 'fleet_task', { session: 'quorum', text: 'First.' })
-  const open = /task ([a-z0-9]{6}): sent/.exec((await tool($, 'fleet_status')).text)?.[1] ?? ''
+  await tool($, 'fleet_task', { session: 'quorum', text: 'Add tests.', scope: 'src/parser only', done: 'the tests pass' })
+  expect(w.sent.at(-1)?.text).toContain('Goal: Add tests.\nScope: src/parser only\nDone when: the tests pass\n')
+})
+
+test('fleet_task for a busy member queues the task, says behind which one, and fleet_status lists the queue', async ($, on) => {
+  const w = world(on, TEAM)
+  await $.session.start(LIVE)
+  const first = await tool($, 'fleet_task', { session: 'quorum', text: 'First.' })
+  const open = /task ([a-z0-9]{6})$/.exec(first.text)?.[1] ?? ''
   expect(open).toMatch(/^[a-z0-9]{6}$/)
   const sent = w.sent.length
-  expect(await tool($, 'fleet_task', { session: 'quorum', text: 'Second.' })).toEqual({
-    text: `task ${open} is still open`,
+  const second = await tool($, 'fleet_task', { session: 'quorum', text: 'Second.' })
+  expect(second.isError).toBe(false)
+  expect(second.text).toMatch(new RegExp(`^queued task [a-z0-9]{6} for quorum-63, behind task ${open}$`))
+  expect(w.sent.length).toBe(sent)
+  expect((await tool($, 'fleet_status')).text).toMatch(/ {2}queued: [a-z0-9]{6}/)
+})
+
+test('two fleet_task calls at once both land on the team: one sent, one queued', async ($, on) => {
+  world(on, TEAM)
+  await $.session.start(LIVE)
+  const outs = await Promise.all([
+    tool($, 'fleet_task', { session: 'quorum', text: 'First.' }),
+    tool($, 'fleet_task', { session: 'quorum', text: 'Second.' }),
+  ])
+  expect(outs.map(o => o.isError)).toEqual([false, false])
+  const status = (await tool($, 'fleet_status')).text
+  expect(status).toMatch(/ {2}task [a-z0-9]{6}: sent/)
+  expect(status).toMatch(/ {2}queued: [a-z0-9]{6}$/m)
+})
+
+test('fleet_task after a task no member has is an error and queues nothing', async ($, on) => {
+  const w = world(on, TEAM)
+  await $.session.start(LIVE)
+  expect(await tool($, 'fleet_task', { session: 'quorum', text: 'Review.', after: 'zz9zz9' })).toEqual({
+    text: 'no task zz9zz9 on the team',
     isError: true,
   })
-  expect(w.sent.length).toBe(sent)
+  expect(w.sent).toEqual([])
+  expect((await tool($, 'fleet_status')).text).not.toContain('queued')
+})
+
+test('fleet_cancel cancels the open task and tells the member', async ($, on) => {
+  const w = world(on, TEAM)
+  await $.session.start(LIVE)
+  const first = await tool($, 'fleet_task', { session: 'quorum', text: 'First.' })
+  const open = /task ([a-z0-9]{6})$/.exec(first.text)?.[1] ?? ''
+  expect(await tool($, 'fleet_cancel', { session: 'quorum' })).toEqual({ text: `cancelled task ${open} for quorum-63`, isError: false })
+  expect(w.sent.at(-1)?.text).toBe(`Task ${open} is cancelled. Stop work on it; no report is needed.`)
+  expect((await tool($, 'fleet_status')).text).toContain(`  task ${open}: cancelled`)
+  expect(await tool($, 'fleet_cancel', { session: 'quorum' })).toEqual({ text: 'quorum-63 has no open task', isError: true })
+})
+
+test('the status line counts the team while it has one, and is cleared when it is gone', async ($, on) => {
+  const w = world(on, TEAM)
+  await $.session.start(LIVE)
+  await w.clock.advance(4000)
+  expect(w.statuses.at(-1)).toBe('fleet 1 on team')
+  await tool($, 'fleet_task', { session: 'quorum', text: 'First.' })
+  await w.clock.advance(4000)
+  expect(w.statuses.at(-1)).toBe('fleet 1 on team · 1 open')
+  const count = w.statuses.length
+  await w.clock.advance(4000)
+  expect(w.statuses.length).toBe(count)
+  await tool($, 'fleet_drop', { session: 'quorum' })
+  await w.clock.advance(4000)
+  expect(w.statuses.at(-1)).toBeUndefined()
+})
+
+test('a member row opens its detail: goal, scope, done condition, queue; back returns to the list', async ($, on) => {
+  world(on, TEAM)
+  await $.session.start(LIVE)
+  await tool($, 'fleet_task', { session: 'quorum', text: 'Build the parser.', scope: 'src/parser only', done: 'the tests pass' })
+  await tool($, 'fleet_task', { session: 'quorum', text: 'Review it.' })
+  await run($, '')
+  const ui = await pane($)
+  await ui.press({ key: 'member:q1' })
+  for (const text of [/Build the parser\./, /src\/parser only/, /the tests pass/, /^queued/, /Review it\./]) {
+    expect(await ui.find({ type: 'Text', text })).toBeDefined()
+  }
+  expect(await ui.find({ type: 'Text', text: /mnemos-9e/ })).toBeUndefined()
+  await ui.press({ key: 'back' })
+  expect(await ui.find({ type: 'Text', text: /mnemos-9e/ })).toBeDefined()
+  expect(await ui.find({ key: 'back' })).toBeUndefined()
+  await ui.unmount()
 })
 
 test('fleet_task is allowed once the member\'s last task is done', async ($, on) => {

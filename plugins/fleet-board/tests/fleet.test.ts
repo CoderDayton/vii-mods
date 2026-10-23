@@ -4,7 +4,7 @@ import { createFleet } from '../src/fleet'
 import type { Hire, Io, Note } from '../src/fleet'
 import type { Peer } from '../src/peers'
 import type { Text } from '../src/transcript'
-import { DROP, ROLES } from '../src/roles'
+import { cancelMessage, DROP, ROLES } from '../src/roles'
 
 type Rec = { id: string; name: string; dir: string; state?: string; at?: number }
 
@@ -198,18 +198,41 @@ test('a briefing that is not delivered leaves the team as it was', async () => {
   expect(w.roster).toEqual({})
 })
 
-test('a task goes out as one message from the boss; empty text is refused', async () => {
+const REPORT_LINE = (id: string) =>
+  `Report in your final reply, not in a separate message to the boss: what changed, how you checked it, and anything left open. End it with "done ${id}" or "blocked ${id}: <why>".`
+
+test('a task goes out as one message from the boss, with its goal and the report it wants; empty text is refused', async () => {
   const { w, fleet } = world()
   const [q] = await fleet.refresh()
-  expect(await fleet.task(q!, '   ')).toEqual({ ok: false, text: 'type the task first' })
+  await fleet.brief(q!, research)
+  w.sent.length = 0
+  expect(await fleet.task(q!, { text: '   ' })).toEqual({ ok: false, text: 'type the task first' })
   expect(w.sent).toEqual([])
-  const out = await fleet.task(q!, 'Add tests for the parser.')
+  const out = await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent[0]?.text ?? '')
   expect(id).toMatch(/^[a-z0-9]{6}$/)
-  expect(w.sent).toEqual([
-    { id: 'q1', text: `Task from claude-mods-1c (id ${id}): Add tests for the parser.\nPut the full report in your final reply, not in a separate message to the boss. End it with "done ${id}" or "blocked ${id}".` },
-  ])
-  expect(out).toEqual({ ok: true, text: 'sent quorum-63 a task' })
+  expect(w.sent).toEqual([{ id: 'q1', text: `Task from claude-mods-1c (id ${id})\nGoal: Add tests for the parser.\n${REPORT_LINE(id)}` }])
+  expect(out).toEqual({ ok: true, text: `sent quorum-63 task ${id}` })
+})
+
+test('a task with a scope and a done condition says both, between the goal and the report', async () => {
+  const { w, fleet } = world()
+  const [q] = await fleet.refresh()
+  await fleet.brief(q!, research)
+  w.sent.length = 0
+  await fleet.task(q!, { text: 'Add tests for the parser.', scope: 'src/parser only', done: 'the new tests pass' })
+  const id = taskIdOf(w.sent[0]?.text ?? '')
+  expect(w.sent[0]?.text).toBe(
+    `Task from claude-mods-1c (id ${id})\nGoal: Add tests for the parser.\nScope: src/parser only\nDone when: the new tests pass\n${REPORT_LINE(id)}`,
+  )
+  expect(w.roster.q1?.task).toMatchObject({ text: 'Add tests for the parser.', scope: 'src/parser only', done: 'the new tests pass' })
+})
+
+test('a task for a session that is not on the team is refused and sends nothing', async () => {
+  const { w, fleet } = world()
+  const [q] = await fleet.refresh()
+  expect(await fleet.task(q!, { text: 'Add tests.' })).toEqual({ ok: false, text: 'quorum-63 is not on the team' })
+  expect(w.sent).toEqual([])
 })
 
 test('the notes keep the last six', async () => {
@@ -303,13 +326,21 @@ test('a task is done once the session echoes its task id, and stays sent until t
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   await fleet.refresh()
-  expect(w.roster.q1?.task).toEqual({ id, sentAt: 10_000, status: 'sent' })
+  expect(w.roster.q1?.task).toEqual({ id, sentAt: 10_000, status: 'sent', text: 'Add tests for the parser.' })
   w.texts.set('q1', [{ at: 30_000, text: `done ${id}` }])
   await fleet.refresh()
-  expect(w.roster.q1?.task).toEqual({ id, sentAt: 10_000, status: 'done', last: `done ${id}`, announced: 'done' })
+  expect(w.roster.q1?.task).toEqual({
+    id,
+    sentAt: 10_000,
+    status: 'done',
+    text: 'Add tests for the parser.',
+    last: `done ${id}`,
+    endedAt: 30_000,
+    announced: 'done',
+  })
 })
 
 test('a reply that says blocked with the task id marks the task blocked and keeps the blocker text', async () => {
@@ -318,7 +349,7 @@ test('a reply that says blocked with the task id marks the task blocked and keep
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 30_000, text: `blocked ${id}: the parser module is missing` }])
   await fleet.refresh()
@@ -326,8 +357,10 @@ test('a reply that says blocked with the task id marks the task blocked and keep
     id,
     sentAt: 10_000,
     status: 'blocked',
+    text: 'Add tests for the parser.',
     blocker: `blocked ${id}: the parser module is missing`,
     last: `blocked ${id}: the parser module is missing`,
+    endedAt: 30_000,
     announced: 'blocked',
   })
 })
@@ -338,7 +371,7 @@ test('a reply without the task id is kept as the last line, and the task stays s
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 25_000, text: 'Which parser module?' }])
   await fleet.refresh()
@@ -346,6 +379,7 @@ test('a reply without the task id is kept as the last line, and the task stays s
     id,
     sentAt: 10_000,
     status: 'sent',
+    text: 'Add tests for the parser.',
     last: 'Which parser module?',
     lastAt: 25_000,
     announced: 'asked:Which parser module?',
@@ -358,7 +392,7 @@ test('two refreshes that overlap send the boss one notice', async () => {
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 25_000, text: `done ${id}` }])
   await Promise.all([fleet.refresh(), fleet.refresh()])
@@ -371,7 +405,7 @@ test('a task that is done is announced to the boss once, and not again on later 
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 30_000, text: `done ${id}` }])
   await fleet.refresh()
@@ -386,7 +420,7 @@ test('a done notice to the boss carries the reply text, up to the line with the 
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 30_000, text: `Built the parser.\nTests: 12 pass.\ndone ${id}\nNext I would look at the lexer.` }])
   await fleet.refresh()
@@ -399,7 +433,7 @@ test('a blocked notice to the boss carries the reply text', async () => {
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 30_000, text: `Could not start.\nblocked ${id}: the parser module is missing` }])
   await fleet.refresh()
@@ -412,7 +446,7 @@ test('a notice the boss could not receive is not marked announced, and is sent o
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 30_000, text: `done ${id}` }])
   w.promptFails = 1
@@ -430,7 +464,7 @@ test('a question from the employee is announced to the boss', async () => {
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 25_000, text: 'Which parser module?' }])
   await fleet.refresh()
@@ -443,7 +477,7 @@ test('progress that is not a question is not announced to the boss', async () =>
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   w.texts.set('q1', [{ at: 25_000, text: 'working on the parser' }])
   await fleet.refresh()
   expect(w.prompts).toEqual([])
@@ -455,7 +489,7 @@ test('done counts only as a whole word before the task id, in any case', async (
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 25_000, text: `undone ${id}` }])
   await fleet.refresh()
@@ -471,7 +505,7 @@ test('blocked counts only as a whole word before the task id, in any case', asyn
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 25_000, text: `unblocked ${id}` }])
   await fleet.refresh()
@@ -487,7 +521,7 @@ test('a blocked task becomes done when a later reply echoes done with its id', a
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 25_000, text: `blocked ${id}: the parser module is missing` }])
   await fleet.refresh()
@@ -507,7 +541,7 @@ test('a blocked task that stays blocked keeps its cursor and writes the roster o
   await fleet.brief(q!, research)
   w.replies.set('q1', 20_000)
   await fleet.refresh()
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 25_000, text: `blocked ${id}: no parser` }])
   await fleet.refresh()
@@ -522,7 +556,7 @@ test('a sent task that goes quiet after one line is flagged, and again after it 
   const { w, fleet } = world()
   const [q] = await fleet.refresh()
   await fleet.brief(q!, research)
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 20_000, text: 'working on the parser' }])
   w.clock = 20_000
@@ -559,7 +593,7 @@ test('a finished task drops its transcript cursor', async () => {
   w.replies.set('q1', 20_000)
   await fleet.refresh()
   w.clock = 15_000
-  await fleet.task(q!, 'Add tests for the parser.')
+  await fleet.task(q!, { text: 'Add tests for the parser.' })
   const id = taskIdOf(w.sent.at(-1)?.text ?? '')
   w.texts.set('q1', [{ at: 30_000, text: `done ${id}` }])
   await fleet.refresh()
@@ -584,4 +618,249 @@ test('dropping a member drops its transcript cursor', async () => {
   await fleet.brief(q!, research)
   await fleet.drop(q!)
   expect(w.forgotten).toEqual([{ dir: '/p/quorum', id: 'q1' }])
+})
+
+
+const hired = async () => {
+  const { w, fleet } = world()
+  const [q] = await fleet.refresh()
+  await fleet.brief(q!, research)
+  w.replies.set('q1', 20_000)
+  await fleet.refresh()
+  w.sent.length = 0
+  return { w, fleet, q: q! }
+}
+
+test('a task for a member with a task in flight is queued, and sent once that task is done', async () => {
+  const { w, fleet, q } = await hired()
+  const first = await fleet.task(q, { text: 'First.' })
+  const a = taskIdOf(w.sent[0]?.text ?? '')
+  expect(first).toEqual({ ok: true, text: `sent quorum-63 task ${a}` })
+  const second = await fleet.task(q, { text: 'Second.' })
+  const b = w.roster.q1?.queue?.[0]?.id ?? ''
+  expect(b).toMatch(/^[a-z0-9]{6}$/)
+  expect(second).toEqual({ ok: true, text: `queued task ${b} for quorum-63, behind task ${a}` })
+  expect(w.sent.length).toBe(1)
+  w.texts.set('q1', [{ at: 30_000, text: `done ${a}` }])
+  await fleet.refresh()
+  expect(w.sent.length).toBe(2)
+  expect(taskIdOf(w.sent[1]?.text ?? '')).toBe(b)
+  expect(w.sent[1]?.text).toContain('Goal: Second.')
+  expect(w.roster.q1?.task).toMatchObject({ id: b, status: 'sent', text: 'Second.' })
+  expect(w.roster.q1?.queue ?? []).toEqual([])
+  expect(w.roster.q1?.history?.map(t => [t.id, t.status])).toEqual([[a, 'done']])
+})
+
+test('the done notice of a task reaches the boss before the next queued task is sent', async () => {
+  const { w, fleet, q } = await hired()
+  await fleet.task(q, { text: 'First.' })
+  const a = taskIdOf(w.sent[0]?.text ?? '')
+  await fleet.task(q, { text: 'Second.' })
+  w.texts.set('q1', [{ at: 30_000, text: `done ${a}` }])
+  w.promptFails = 1
+  await fleet.refresh()
+  expect(w.sent.length).toBe(1)
+  await fleet.refresh()
+  expect(w.prompts[0]).toContain(`task ${a} is done`)
+  expect(w.sent.length).toBe(2)
+})
+
+test('a blocked task frees its member for the next queued task', async () => {
+  const { w, fleet, q } = await hired()
+  await fleet.task(q, { text: 'First.' })
+  const a = taskIdOf(w.sent[0]?.text ?? '')
+  await fleet.task(q, { text: 'Second.' })
+  w.texts.set('q1', [{ at: 30_000, text: `blocked ${a}: no parser` }])
+  await fleet.refresh()
+  expect(w.sent.length).toBe(2)
+  expect(w.roster.q1?.history?.map(t => [t.id, t.status])).toEqual([[a, 'blocked']])
+})
+
+test('a task with after waits until that task is done, even for a free member', async () => {
+  const { w, fleet, q } = await hired()
+  const m = w.peers.find(p => p.id === 'm1')!
+  await fleet.brief(m, research)
+  w.replies.set('m1', 20_000)
+  await fleet.refresh()
+  w.sent.length = 0
+  await fleet.task(q, { text: 'Build it.' })
+  const a = taskIdOf(w.sent[0]?.text ?? '')
+  const out = await fleet.task(m, { text: 'Review it.', after: a })
+  const b = w.roster.m1?.queue?.[0]?.id ?? ''
+  expect(out).toEqual({ ok: true, text: `queued task ${b} for mnemos-9e, after task ${a}` })
+  expect(w.sent.length).toBe(1)
+  await fleet.refresh()
+  expect(w.sent.length).toBe(1)
+  w.texts.set('q1', [{ at: 30_000, text: `done ${a}` }])
+  await fleet.refresh()
+  expect(w.sent.at(-1)?.id).toBe('m1')
+  expect(taskIdOf(w.sent.at(-1)?.text ?? '')).toBe(b)
+})
+
+test('cancel ends the open task, tells the member, and sends the next queued task', async () => {
+  const { w, fleet, q } = await hired()
+  w.clock = 15_000
+  await fleet.task(q, { text: 'First.' })
+  const a = taskIdOf(w.sent[0]?.text ?? '')
+  await fleet.task(q, { text: 'Second.' })
+  const b = w.roster.q1?.queue?.[0]?.id ?? ''
+  w.clock = 40_000
+  expect(await fleet.cancel(q)).toEqual({ ok: true, text: `cancelled task ${a} for quorum-63` })
+  expect(w.sent[1]).toEqual({ id: 'q1', text: cancelMessage(a) })
+  expect(taskIdOf(w.sent[2]?.text ?? '')).toBe(b)
+  expect(w.roster.q1?.history?.[0]).toMatchObject({ id: a, status: 'cancelled', endedAt: 40_000 })
+  expect(w.forgotten).toContainEqual({ dir: '/p/quorum', id: 'q1', since: 15_000 })
+})
+
+test('cancel of a queued task takes it off the queue and sends nothing', async () => {
+  const { w, fleet, q } = await hired()
+  await fleet.task(q, { text: 'First.' })
+  await fleet.task(q, { text: 'Second.' })
+  const b = w.roster.q1?.queue?.[0]?.id ?? ''
+  expect(await fleet.cancel(q, b)).toEqual({ ok: true, text: `took task ${b} off the queue for quorum-63` })
+  expect(w.sent.length).toBe(1)
+  expect(w.roster.q1?.queue ?? []).toEqual([])
+})
+
+test('cancel with no open task, or of a task the member does not have, is refused', async () => {
+  const { w, fleet, q } = await hired()
+  expect(await fleet.cancel(q)).toEqual({ ok: false, text: 'quorum-63 has no open task' })
+  expect(await fleet.cancel(q, 'zzzzzz')).toEqual({ ok: false, text: 'quorum-63 has no task zzzzzz' })
+  expect(w.sent).toEqual([])
+})
+
+test('a member keeps its last five earlier tasks, oldest first', async () => {
+  const { w, fleet, q } = await hired()
+  const ids: string[] = []
+  for (let i = 0; i < 7; i++) {
+    await fleet.task(q, { text: `Task ${i}.` })
+    const id = taskIdOf(w.sent.at(-1)?.text ?? '')
+    ids.push(id)
+    w.texts.set('q1', [{ at: 30_000, text: `done ${id}` }])
+    await fleet.refresh()
+  }
+  expect(w.roster.q1?.task?.id).toBe(ids[6])
+  expect(w.roster.q1?.history?.map(t => t.id)).toEqual(ids.slice(1, 6))
+})
+
+test('changes found in one scan reach the boss as one prompt', async () => {
+  const { w, fleet, q } = await hired()
+  const m = w.peers.find(p => p.id === 'm1')!
+  await fleet.brief(m, research)
+  w.replies.set('m1', 20_000)
+  await fleet.refresh()
+  await fleet.task(q, { text: 'One.' })
+  await fleet.task(m, { text: 'Two.' })
+  const a = taskIdOf(w.sent.at(-2)?.text ?? '')
+  const b = taskIdOf(w.sent.at(-1)?.text ?? '')
+  w.texts.set('q1', [{ at: 30_000, text: `done ${a}` }])
+  w.texts.set('m1', [{ at: 30_000, text: `blocked ${b}: no access` }])
+  await fleet.refresh()
+  expect(w.prompts).toEqual([
+    `quorum-63: task ${a} is done. ${REPORT}\n> done ${a}\n\nmnemos-9e: task ${b} is blocked. ${REPORT}\n> blocked ${b}: no access`,
+  ])
+  expect(w.roster.q1?.task?.announced).toBe('done')
+  expect(w.roster.m1?.task?.announced).toBe('blocked')
+})
+
+test('two tasks for a free member sent at the same time go out once each: the first is sent, the second queued', async () => {
+  const { w, fleet, q } = await hired()
+  await Promise.all([fleet.task(q, { text: 'One.' }), fleet.task(q, { text: 'Two.' })])
+  expect(w.sent.length).toBe(1)
+  expect(w.roster.q1?.queue?.length).toBe(1)
+  expect(w.roster.q1?.queue?.[0]?.id).not.toBe(w.roster.q1?.task?.id)
+})
+
+test('a done task that a queued task waits on is kept past the last five, so the queued task is still sent', async () => {
+  const { w, fleet, q } = await hired()
+  const m = w.peers.find(p => p.id === 'm1')!
+  await fleet.brief(m, research)
+  w.replies.set('m1', 20_000)
+  await fleet.refresh()
+  await fleet.task(m, { text: 'Busy.' })
+  const busy = taskIdOf(w.sent.at(-1)?.text ?? '')
+  await fleet.task(q, { text: 'Build it.' })
+  const a = taskIdOf(w.sent.at(-1)?.text ?? '')
+  await fleet.task(m, { text: 'Review it.', after: a })
+  const b = w.roster.m1?.queue?.[0]?.id ?? ''
+  w.texts.set('q1', [{ at: 30_000, text: `done ${a}` }])
+  await fleet.refresh()
+  for (let i = 0; i < 6; i++) {
+    await fleet.task(q, { text: `More ${i}.` })
+    const id = taskIdOf(w.sent.at(-1)?.text ?? '')
+    w.texts.set('q1', [{ at: 30_000, text: `done ${id}` }])
+    await fleet.refresh()
+  }
+  w.texts.set('m1', [{ at: 30_000, text: `done ${busy}` }])
+  await fleet.refresh()
+  expect(taskIdOf(w.sent.at(-1)?.text ?? '')).toBe(b)
+})
+
+const twoHired = async () => {
+  const h = await hired()
+  const m = h.w.peers.find(p => p.id === 'm1')!
+  await h.fleet.brief(m, research)
+  h.w.replies.set('m1', 20_000)
+  await h.fleet.refresh()
+  h.w.sent.length = 0
+  return { ...h, m }
+}
+
+test('a blocked task replaced by the next one is still read: a later done is recorded, told to the boss, and frees what waits on it', async () => {
+  const { w, fleet, q, m } = await twoHired()
+  await fleet.task(m, { text: 'Busy.' })
+  await fleet.task(q, { text: 'Build it.' })
+  const a = taskIdOf(w.sent.at(-1)?.text ?? '')
+  await fleet.task(q, { text: 'Next.' })
+  await fleet.task(m, { text: 'Review it.', after: a })
+  const c = w.roster.m1?.queue?.[0]?.id ?? ''
+  const busy = taskIdOf(w.sent[0]?.text ?? '')
+  w.texts.set('m1', [{ at: 30_000, text: `done ${busy}` }])
+  w.texts.set('q1', [{ at: 30_000, text: `blocked ${a}: no parser` }])
+  w.forgotten.length = 0
+  await fleet.refresh()
+  expect(w.roster.q1?.history?.find(t => t.id === a)?.status).toBe('blocked')
+  expect(w.forgotten).not.toContainEqual({ dir: '/p/quorum', id: 'q1', since: 10_000 })
+  w.prompts.length = 0
+  w.texts.set('q1', [
+    { at: 30_000, text: `blocked ${a}: no parser` },
+    { at: 40_000, text: `Found it.\ndone ${a}` },
+  ])
+  await fleet.refresh()
+  expect(w.roster.q1?.history?.find(t => t.id === a)).toMatchObject({ status: 'done', endedAt: 40_000, announced: 'done' })
+  expect(w.prompts).toEqual([`quorum-63: task ${a} is done. ${REPORT}\n> Found it.\n> done ${a}`])
+  expect(w.sent.at(-1)?.id).toBe('m1')
+  expect(taskIdOf(w.sent.at(-1)?.text ?? '')).toBe(c)
+  await fleet.refresh()
+  expect(w.prompts.length).toBe(1)
+})
+
+test('a queued task whose after task left the team with its member is told to the boss once', async () => {
+  const { w, fleet, q, m } = await twoHired()
+  await fleet.task(m, { text: 'Busy.' })
+  await fleet.task(q, { text: 'Build it.' })
+  const a = taskIdOf(w.sent.at(-1)?.text ?? '')
+  await fleet.task(m, { text: 'Review it.', after: a })
+  const c = w.roster.m1?.queue?.[0]?.id ?? ''
+  await fleet.drop(q)
+  await fleet.refresh()
+  const stuck = `mnemos-9e: queued task ${c} waits on task ${a}, which is no longer on the team. Cancel it with fleet_cancel, or send it again without after.`
+  expect(w.prompts).toEqual([stuck])
+  await fleet.refresh()
+  expect(w.prompts).toEqual([stuck])
+})
+
+test('a queued task whose after task was cancelled is told to the boss once', async () => {
+  const { w, fleet, q, m } = await twoHired()
+  await fleet.task(m, { text: 'Busy.' })
+  await fleet.task(q, { text: 'Build it.' })
+  const a = taskIdOf(w.sent.at(-1)?.text ?? '')
+  await fleet.task(m, { text: 'Review it.', after: a })
+  const c = w.roster.m1?.queue?.[0]?.id ?? ''
+  await fleet.cancel(q)
+  await fleet.refresh()
+  await fleet.refresh()
+  expect(w.prompts).toEqual([
+    `mnemos-9e: queued task ${c} waits on task ${a}, which was cancelled. Cancel it with fleet_cancel, or send it again without after.`,
+  ])
 })

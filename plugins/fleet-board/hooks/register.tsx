@@ -6,7 +6,7 @@ import { createFleet } from '../src/fleet'
 import type { Fleet, Io } from '../src/fleet'
 import { readOptions } from '../src/options'
 import type { Config } from '../src/options'
-import { bossSection, employeeSection, hireKey, parseEmployment, parseTeam, teamKey } from '../src/team'
+import { bossSection, employeeSection, hireKey, parseEmployment, parseTeam, statusLine, teamKey } from '../src/team'
 import type { Hire } from '../src/team'
 import { exclusive } from '../src/tick'
 import { asToolResult, runTool, TOOL_PREFIX, TOOL_SPECS } from '../src/tools'
@@ -20,6 +20,7 @@ const peersAtom = atom({ plugin: 'fleet-board', key: 'peers' } as const, [])
 const rosterAtom = atom({ plugin: 'fleet-board', key: 'roster' } as const, {})
 const notesAtom = atom({ plugin: 'fleet-board', key: 'notes' } as const, [])
 const bossAtom = atom({ plugin: 'fleet-board', key: 'boss' } as const, 'boss')
+const selectedAtom = atom({ plugin: 'fleet-board', key: 'selected' } as const, '')
 
 const PANE_ID = 'fleet'
 const POLL_MS = 4000
@@ -31,6 +32,7 @@ const anyText = (text: string): boolean => text.trim() !== ''
 // What the hooks give the core, set when the session starts.
 type Env = {
   every: (ms: number, fn: () => void) => { cancel: () => void }
+  status: (text: string | undefined) => void
 }
 
 let io: Io | null = null
@@ -45,6 +47,8 @@ let reader: Reader | null = null
 // Whether the fleet pane is open. With the pane open the tick reads the sessions even when nobody is on the team.
 let paneOpen = false
 
+let shownStatus: string | undefined
+
 const stopPolling = (): void => {
   timer?.cancel()
   timer = null
@@ -58,6 +62,7 @@ const startHook: Hook<'session.start'> = async ($, e, next) => {
   await update($, rosterAtom, () => team)
   // One reader per session start: its byte cursors belong to the io that uses them.
   const transcripts = createTranscriptReader(argv => $.process.run(argv).then(r => r.stdout))
+  let saving: Promise<unknown> = Promise.resolve()
   reader = transcripts
   io = {
     run: (argv, init) => $.process.run(argv, init),
@@ -81,16 +86,18 @@ const startHook: Hook<'session.start'> = async ($, e, next) => {
       roster: {
         get: () => read($, rosterAtom),
         set: async fn => {
-          const updated = fn(await read($, rosterAtom))
-          await update($, rosterAtom, () => updated)
-          await $.store.set(teamKey(self), updated)
+          await update($, rosterAtom, fn)
+          const save = saving.then(async () => $.store.set(teamKey(self), await read($, rosterAtom)))
+          saving = save.catch(() => undefined)
+          await save
         },
       },
       notes: { get: () => read($, notesAtom), set: async fn => void (await update($, notesAtom, fn)) },
       boss: { get: () => read($, bossAtom), set: async fn => void (await update($, bossAtom, fn)) },
     },
   }
-  env = { every: (ms, fn) => $.clock.every(ms, fn) }
+  env = { every: (ms, fn) => $.clock.every(ms, fn), status: text => $.ui.status(text) }
+  shownStatus = undefined
   paneOpen = false
   if (startConfig !== null) {
     fleet = createFleet(io)
@@ -143,6 +150,7 @@ const composeHook: Hook<'prompt.compose'> = async ($, e, next) => {
 const showPane = async ($: Parameters<Hook<'session.start'>>[0]): Promise<void> => {
   if (fleet === null || env === null) return
   await fleet.refresh()
+  await update($, selectedAtom, () => '')
   await $.ui.open({ id: PANE_ID, title: 'Fleet', closeOnEscape: true, focus: true })
   paneOpen = true
 }
@@ -151,15 +159,22 @@ const showPane = async ($: Parameters<Hook<'session.start'>>[0]): Promise<void> 
 const startPolling = (f: Fleet, e: Env): void => {
   stopPolling()
   timer = e.every(POLL_MS, () => {
-    if (io !== null) void tick(f, io).catch(() => undefined)
+    if (io !== null) void tick(f, io, e).catch(() => undefined)
   })
+}
+
+const showStatus = async (i: Io, e: Env): Promise<void> => {
+  const text = statusLine(await i.state.roster.get())
+  if (text === shownStatus) return
+  shownStatus = text
+  e.status(text)
 }
 
 // With the pane closed and nobody on the team there is nothing to read, so the tick skips the scan and the transcript reads.
 // A tick that is still running makes the next one skip, so a slow scan cannot announce the same notice twice.
-const tick = exclusive(async (f: Fleet, i: Io): Promise<void> => {
-  if (!paneOpen && Object.keys(await i.state.roster.get()).length === 0) return
-  await f.refresh()
+const tick = exclusive(async (f: Fleet, i: Io, e: Env): Promise<void> => {
+  if (paneOpen || Object.keys(await i.state.roster.get()).length > 0) await f.refresh()
+  await showStatus(i, e)
 })
 
 // A handler that throws becomes a note in the pane instead of an unhandled rejection.
@@ -215,13 +230,18 @@ export const register: Register = (on, options) => {
     if (!('Input' in els)) return <els.Text>Open the fleet pane in a terminal.</els.Text>
     const peers = await read($, peersAtom)
     const roster = await read($, rosterAtom)
-    const rows = rowsOf(peers, roster, await $.clock.now(), config.quietMs)
+    const now = await $.clock.now()
+    const rows = rowsOf(peers, roster, now, config.quietMs)
+    const selected = await read($, selectedAtom)
+    const row = rows.find(r => r.id === selected)
+    const hire = roster[selected]
     return paneView(
       els as Els,
       {
         columns: e.props.bodyColumns ?? e.viewport?.columns ?? DEFAULT_COLUMNS,
         rows,
         notes: (await read($, notesAtom)).slice(-NOTES_SHOWN),
+        ...(row === undefined || hire === undefined ? {} : { detail: { row, hire, now } }),
       },
       {
         onRefresh: () => guarded(f => f.refresh()),
@@ -229,6 +249,8 @@ export const register: Register = (on, options) => {
           paneOpen = false
           void $.ui.close({ id: PANE_ID })
         },
+        onSelect: id => void update($, selectedAtom, () => id),
+        onBack: () => void update($, selectedAtom, () => ''),
       },
     )
   })

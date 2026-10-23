@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { bossLabel, bossSection, employeeSection, hireKey, noticeOf, parseEmployment, parseTeam, STALE_MS, teamKey, teamStatus } from '../src/team'
+import { bossLabel, bossSection, employeeSection, hireKey, noticeOf, parseEmployment, parseTeam, STALE_MS, statusLine, teamKey, teamStatus } from '../src/team'
 
 test('the store keeps the team under the boss and each hire under the employee', () => {
   expect(teamKey('me')).toBe('team:me')
@@ -203,4 +203,60 @@ test('the team status of an empty team says so', () => {
 test('a stored task keeps the key of what was announced for it', () => {
   const stored = { q1: { name: 'quorum-63', dir: '/p/quorum', role: 'research', briefedAt: 5, task: { id: 'k3x9qa', sentAt: 7, status: 'done', announced: 'done' } } }
   expect(parseTeam(stored).q1?.task?.announced).toBe('done')
+})
+
+const BASE = { name: 'quorum-63', dir: '/p/quorum', role: 'research' as const, briefedAt: 5, readyAt: 9 }
+
+test('a stored member keeps its task brief, end time, queue and earlier tasks, and drops a malformed entry', () => {
+  const task = { id: 'k3x9qa', sentAt: 7, status: 'cancelled', text: 'Build it.', scope: 'src only', done: 'tests pass', endedAt: 9 }
+  const queued = { id: 'b2', text: 'Next.', after: 'k3x9qa', queuedAt: 8 }
+  const earlier = { id: 'a1', sentAt: 1, status: 'done', text: 'Before.', endedAt: 3 }
+  const stored = { q1: { ...BASE, task, queue: [queued, { id: 'bad' }], history: [earlier, { id: 'bad' }] } }
+  expect(parseTeam(stored).q1).toEqual({ ...BASE, task, queue: [queued], history: [earlier] })
+})
+
+test('the team status names a task goal, the queued tasks and the earlier ones', () => {
+  const team = {
+    q1: {
+      ...BASE,
+      task: { id: 'k3x9qa', sentAt: 100, status: 'sent' as const, text: 'Build the parser.\nThen the lexer.' },
+      queue: [
+        { id: 'b2b2b2', text: 'Review.', queuedAt: 150 },
+        { id: 'c3c3c3', text: 'Ship.', after: 'zz9zz9', queuedAt: 160 },
+      ],
+      history: [
+        { id: 'a1a1a1', sentAt: 0, status: 'done' as const, endedAt: 4 * 60_000 },
+        { id: 'd4d4d4', sentAt: 0, status: 'cancelled' as const, endedAt: 10 },
+      ],
+    },
+  }
+  const text = teamStatus(team, 200)
+  expect(text).toContain('  goal: Build the parser.\n  task k3x9qa: sent')
+  expect(text).toContain('  queued: b2b2b2, c3c3c3 after zz9zz9')
+  expect(text).toContain('  earlier: a1a1a1 done in 4m, d4d4d4 cancelled')
+})
+
+test('a cancelled task sends the boss no notice', () => {
+  expect(noticeOf('quorum-63', { id: 'k3x9qa', sentAt: 1, status: 'cancelled' }, 10 * STALE_MS)).toBeNull()
+})
+
+test('the boss section names fleet_cancel and how to brief a task', () => {
+  const text = bossSection({ q1: BASE }, 0) ?? ''
+  expect(text).toContain('mcp__fleet-board__fleet_cancel')
+  expect(text).toContain('done')
+  expect(text).toContain('scope')
+  expect(text).toContain('after')
+})
+
+test('the status line counts the team and its open, blocked, done and queued tasks, and is empty with no team', () => {
+  expect(statusLine({})).toBeUndefined()
+  const task = (status: 'sent' | 'done' | 'blocked') => ({ id: 'k3x9qa', sentAt: 1, status })
+  expect(statusLine({ q1: BASE })).toBe('fleet 1 on team')
+  expect(
+    statusLine({
+      q1: { ...BASE, task: task('sent'), queue: [{ id: 'b2', text: 'x', queuedAt: 1 }, { id: 'c3', text: 'y', queuedAt: 1 }] },
+      m1: { ...BASE, task: task('blocked') },
+      o1: { ...BASE, task: task('done') },
+    }),
+  ).toBe('fleet 3 on team · 1 open · 1 blocked · 1 done · 2 queued')
 })

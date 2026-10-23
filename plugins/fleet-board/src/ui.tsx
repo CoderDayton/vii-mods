@@ -1,8 +1,8 @@
 import type { Elements, RenderSurface } from 'claude-code'
 
 import type { Note } from './fleet'
-import { CLOSE_LABEL, frameOf, REFRESH_LABEL } from './view'
-import type { Line, Row, Tone } from './view'
+import { BACK_LABEL, CLOSE_LABEL, frameOf, REFRESH_LABEL } from './view'
+import type { Detail, Line, Row, Tone } from './view'
 
 export type Els = Elements[Exclude<RenderSurface, 'mobile'>]
 
@@ -12,11 +12,14 @@ export type PaneModel = {
   columns: number
   rows: Row[]
   notes: Note[]
+  detail?: Detail
 }
 
 export type PaneActions = {
   onRefresh: () => void
   onClose: () => void
+  onSelect: (id: string) => void
+  onBack: () => void
 }
 
 const toneProps = (tone: Tone): { bold?: boolean; dimColor?: boolean; color?: string } => {
@@ -25,6 +28,8 @@ const toneProps = (tone: Tone): { bold?: boolean; dimColor?: boolean; color?: st
   if (tone === 'dim') return { dimColor: true }
   return { color: tone }
 }
+
+const segments = (els: Els, line: Line) => line.map((s, i) => <els.Text key={String(i)} {...toneProps(s.tone)}>{s.text}</els.Text>)
 
 // One line of the frame: its segments side by side, each with its own tone. A blank line keeps its height.
 const lineView = (els: Els, line: Line, key: string) => {
@@ -39,21 +44,32 @@ const lineView = (els: Els, line: Line, key: string) => {
   )
 }
 
+const sectionLine = (els: Els, a: PaneActions, line: Line, key: string, member: string | undefined) => {
+  if (member === undefined) return lineView(els, line, key)
+  return (
+    <els.Button key={`member:${member}`} plain onPress={() => a.onSelect(member)}>
+      {segments(els, line)}
+    </els.Button>
+  )
+}
+
 // Round dim borders throughout: the whole pane, then one box per section. The words carry the state; the colors only
 // back them up.
 export const paneView = (els: Els, m: PaneModel, a: PaneActions) => {
   const { Box, Text, Button } = els
-  const frame = frameOf(m.rows, m.notes, m.columns)
+  const frame = frameOf(m.rows, m.notes, m.columns, m.detail === undefined ? {} : { detail: m.detail })
   return (
     <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1} gap={1}>
       {lineView(els, frame.header, 'header')}
       {frame.sections.map(s => (
         <Box key={s.title} flexDirection="column" borderStyle="round" borderDimColor paddingX={1} paddingY={1}>
           <Text dimColor>{s.title}</Text>
-          {s.lines.map((l, i) => lineView(els, l, `${s.title}-${i}`))}
+          {s.lines.map((l, i) => sectionLine(els, a, l, `${s.title}-${i}`, s.press?.[i]))}
         </Box>
       ))}
       <Box>
+        {frame.back && <Button key="back" label={BACK_LABEL} hotkey="b" onPress={a.onBack} />}
+        {frame.back && <Text>  </Text>}
         <Button key="refresh" label={REFRESH_LABEL} hotkey="r" onPress={a.onRefresh} />
         <Text>  </Text>
         <Button key="close" label={CLOSE_LABEL} hotkey="c" onPress={a.onClose} />

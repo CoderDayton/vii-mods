@@ -1,6 +1,6 @@
 // The roles and messages of the boss skill, so the pane and the skill brief a session the same way.
 
-import type { RoleId } from '../types'
+import type { Brief, RoleId } from '../types'
 
 export type { RoleId }
 
@@ -44,7 +44,15 @@ export const briefing = (boss: string, role: Role): string =>
   ].join('\n')
 
 // The id is echoed in the employee's reply: the boss marks a task done only when a reply contains its id.
-export const taskMessage = (boss: string, id: string, text: string): string =>
-  `Task from ${boss} (id ${id}): ${text}\nPut the full report in your final reply, not in a separate message to the boss. End it with "done ${id}" or "blocked ${id}".`
+export const taskMessage = (boss: string, id: string, brief: Brief): string =>
+  [
+    `Task from ${boss} (id ${id})`,
+    `Goal: ${brief.text}`,
+    ...(brief.scope === undefined ? [] : [`Scope: ${brief.scope}`]),
+    ...(brief.done === undefined ? [] : [`Done when: ${brief.done}`]),
+    `Report in your final reply, not in a separate message to the boss: what changed, how you checked it, and anything left open. End it with "done ${id}" or "blocked ${id}: <why>".`,
+  ].join('\n')
+
+export const cancelMessage = (id: string): string => `Task ${id} is cancelled. Stop work on it; no report is needed.`
 
 export const DROP = 'You are off the team. Go back to what the user tells you.'

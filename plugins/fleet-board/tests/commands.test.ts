@@ -16,5 +16,5 @@ test('every other word is a usage error with the usage line', () => {
 
 test('the usage line names the fleet tools that replace the subcommands', () => {
   expect(USAGE.startsWith('usage: ')).toBe(true)
-  for (const name of ['fleet_hire', 'fleet_task', 'fleet_drop', 'fleet_status']) expect(USAGE).toContain(name)
+  for (const name of ['fleet_hire', 'fleet_task', 'fleet_cancel', 'fleet_drop', 'fleet_status']) expect(USAGE).toContain(name)
 })
