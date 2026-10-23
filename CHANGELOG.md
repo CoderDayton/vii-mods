@@ -2,6 +2,27 @@
 
 All notable changes to the vii-mods marketplace are listed here, newest first, each marked with the mod it belongs to. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The mods are not versioned yet (each is 0.1.0), so changes are grouped by the date they reached GitHub. Changes not yet there are listed under Unreleased.
 
+## Unreleased
+
+### Added
+
+- **fleet-board:** queue tasks per member: a task for a busy member waits and is sent when the member is free, and `after` holds a task until another member's task is done
+- **fleet-board:** add `fleet_cancel`, which cancels a member's open task and tells it, or takes a queued task off the queue
+- **fleet-board:** give `fleet_task` optional `scope` and `done` fields. The task message states the goal, scope, done condition and the report it wants
+- **fleet-board:** keep each member's last 5 earlier tasks with how long each took, listed by `fleet_status`. A blocked earlier task is still read, so a later done frees what waits on it
+- **fleet-board:** tell the boss once when a queued task can never be sent because its `after` task was cancelled or left the team
+- **fleet-board:** open a team member's detail from its line in the pane: its brief, reply, queue and earlier tasks
+- **fleet-board:** show the team's open, blocked, done and queued counts in the status line
+
+### Changed
+
+- **fleet-board:** send the boss every change one scan finds as one prompt, not one prompt per task
+- **fleet-board:** show each member's session state, task run time and queue length on its line in the pane
+
+### Fixed
+
+- **fleet-board:** keep both changes when two team updates land at once, such as a task call during the background scan
+
 ## 2026-10-22
 
 ### Added
