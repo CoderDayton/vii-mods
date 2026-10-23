@@ -2,6 +2,12 @@
 
 All notable changes to the vii-mods marketplace are listed here, newest first, each marked with the mod it belongs to. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The mods are not versioned yet (each is 0.1.0), so changes are grouped by the date they reached GitHub. Changes not yet there are listed under Unreleased.
 
+## Unreleased
+
+### Fixed
+
+- **fleet-board:** keep each session on one team: `fleet_hire` refuses a session that is on another running boss's team, and refuses to hire from a session that is itself an employee. A team whose boss session is gone holds no one
+
 ## 2026-10-22
 
 ### Added
