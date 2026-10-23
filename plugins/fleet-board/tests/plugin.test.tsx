@@ -295,6 +295,34 @@ test('two fleet_task calls at once both land on the team: one sent, one queued',
   expect(status).toMatch(/ {2}queued: [a-z0-9]{6}$/m)
 })
 
+test('fleet_task to a role goes to a free member of it; with a session too, or neither, it is an error', async ($, on) => {
+  const w = world(on, { 'team:me': { q1: { ...TEAM['team:me'].q1, readyAt: 2 } } })
+  await $.session.start(LIVE)
+  const out = await tool($, 'fleet_task', { role: 'research', text: 'Find the leak.' })
+  expect(out.text).toMatch(/^sent quorum-63 task [a-z0-9]{6}$/)
+  expect(JSON.stringify(w.sent.at(-1)?.to)).toContain('q1')
+  const sent = w.sent.length
+  const both = { text: 'name a session or a role, not both', isError: true }
+  expect(await tool($, 'fleet_task', { session: 'quorum', role: 'research', text: 'x' })).toEqual(both)
+  expect(await tool($, 'fleet_task', { text: 'x' })).toEqual({ text: 'name a session or a role', isError: true })
+  expect(await tool($, 'fleet_task', { role: 'boss', text: 'x' })).toEqual({ text: 'unknown role "boss"; use specialist, local or research', isError: true })
+  expect(w.sent.length).toBe(sent)
+})
+
+test('a pooled task is kept across a restart, listed by fleet_status, shown in the pane, and fleet_cancel takes it off by id', async ($, on) => {
+  const pool = [{ id: 'p1p1p1', role: 'local', text: 'Run the build.', queuedAt: 1 }]
+  world(on, { ...TEAM, 'pool:me': pool })
+  await $.session.start(LIVE)
+  expect((await tool($, 'fleet_status')).text).toContain('- p1p1p1 for Local execution: Run the build.')
+  await run($, '')
+  const ui = await pane($)
+  expect(await ui.find({ type: 'Text', text: /^unassigned$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Run the build\./ })).toBeDefined()
+  await ui.unmount()
+  expect(await tool($, 'fleet_cancel', { task: 'p1p1p1' })).toEqual({ text: 'took task p1p1p1 off the pool', isError: false })
+  expect((await tool($, 'fleet_status')).text).not.toContain('p1p1p1')
+})
+
 test('fleet_task after a task no member has is an error and queues nothing', async ($, on) => {
   const w = world(on, TEAM)
   await $.session.start(LIVE)
@@ -315,6 +343,9 @@ test('fleet_cancel cancels the open task and tells the member', async ($, on) =>
   expect(w.sent.at(-1)?.text).toBe(`Task ${open} is cancelled. Stop work on it; no report is needed.`)
   expect((await tool($, 'fleet_status')).text).toContain(`  task ${open}: cancelled`)
   expect(await tool($, 'fleet_cancel', { session: 'quorum' })).toEqual({ text: 'quorum-63 has no open task', isError: true })
+  const second = await tool($, 'fleet_task', { session: 'quorum', text: 'Second.' })
+  const next = /task ([a-z0-9]{6})$/.exec(second.text)?.[1] ?? ''
+  expect(await tool($, 'fleet_cancel', { task: next })).toEqual({ text: `cancelled task ${next} for quorum-63`, isError: false })
 })
 
 test('the status line counts the team while it has one, and is cleared when it is gone', async ($, on) => {
@@ -476,6 +507,13 @@ test('with no team the session does not scan or read transcripts in the backgrou
   await w.clock.advance(8000)
   expect(w.scans).toBe(0)
   expect(w.transcriptReads).toBe(0)
+})
+
+test('with nobody on the team but a task in the pool, the background scan keeps running', async ($, on) => {
+  const w = world(on, { 'pool:me': [{ id: 'p1p1p1', role: 'local', text: 'Run the build.', queuedAt: 1 }] })
+  await $.session.start(LIVE)
+  await w.clock.advance(8000)
+  expect(w.scans).toBeGreaterThan(0)
 })
 
 test('with the pane open and nobody on the team, the other-sessions list is still read in the background', async ($, on) => {

@@ -4,6 +4,7 @@ import { createFleet } from '../src/fleet'
 import type { Hire, Io, Note } from '../src/fleet'
 import type { Peer } from '../src/peers'
 import type { Text } from '../src/transcript'
+import type { PooledTask } from '../types'
 import { cancelMessage, DROP, ROLES } from '../src/roles'
 
 type Rec = { id: string; name: string; dir: string; state?: string; at?: number }
@@ -31,6 +32,7 @@ const world = () => {
     clock: 10_000,
     peers: [] as Peer[],
     roster: {} as Record<string, Hire>,
+    pool: [] as PooledTask[],
     notes: [] as Note[],
     boss: 'boss',
     scanExit: 0,
@@ -81,6 +83,7 @@ const world = () => {
           w.roster = fn(w.roster)
         },
       },
+      pool: { get: async () => w.pool, set: async fn => void (w.pool = fn(w.pool)) },
       notes: { get: async () => w.notes, set: async fn => void (w.notes = fn(w.notes)) },
       boss: { get: async () => w.boss, set: async fn => void (w.boss = fn(w.boss)) },
     },
@@ -863,4 +866,181 @@ test('a queued task whose after task was cancelled is told to the boss once', as
   expect(w.prompts).toEqual([
     `mnemos-9e: queued task ${c} waits on task ${a}, which was cancelled. Cancel it with fleet_cancel, or send it again without after.`,
   ])
+})
+
+test('a queued reply names what holds the task: here, a report the boss has not had yet', async () => {
+  const { w, fleet, q } = await hired()
+  await fleet.task(q, { text: 'First.' })
+  const a = taskIdOf(w.sent.at(-1)?.text ?? '')
+  w.texts.set('q1', [{ at: 30_000, text: `done ${a}` }])
+  w.promptFails = 1
+  await fleet.refresh()
+  const out = await fleet.task(q, { text: 'Next.' })
+  const b = w.roster.q1?.queue?.[0]?.id ?? ''
+  expect(out).toEqual({ ok: true, text: `queued task ${b} for quorum-63, until you have the report of task ${a}` })
+})
+
+const crew = async (qRole = research, mRole = specialist) => {
+  const { w, fleet } = world()
+  const [q, m] = await fleet.refresh()
+  await fleet.brief(q!, qRole)
+  await fleet.brief(m!, mRole)
+  w.replies.set('q1', 20_000)
+  w.replies.set('m1', 20_000)
+  await fleet.refresh()
+  w.sent.length = 0
+  return { w, fleet, q: q!, m: m! }
+}
+
+test('a task for a role goes at once to a free member of that role', async () => {
+  const { w, fleet } = await crew()
+  const out = await fleet.task('research', { text: 'Find the leak.' })
+  const id = taskIdOf(w.sent[0]?.text ?? '')
+  expect(w.sent.map(s => s.id)).toEqual(['q1'])
+  expect(out).toEqual({ ok: true, text: `sent quorum-63 task ${id}` })
+  expect(w.pool).toEqual([])
+})
+
+test('a task for a role whose members are all busy waits in the pool, and goes to the first one free', async () => {
+  const { w, fleet, q } = await crew()
+  await fleet.task(q, { text: 'Busy.' })
+  const a = taskIdOf(w.sent.at(-1)?.text ?? '')
+  const out = await fleet.task('research', { text: 'Find the leak.' })
+  const p = w.pool[0]?.id ?? ''
+  expect(p).toMatch(/^[a-z0-9]{6}$/)
+  expect(out).toEqual({ ok: true, text: `queued task ${p} for the next free research member` })
+  expect(w.sent.length).toBe(1)
+  w.texts.set('q1', [{ at: 30_000, text: `done ${a}` }])
+  await fleet.refresh()
+  expect(w.sent.at(-1)?.id).toBe('q1')
+  expect(taskIdOf(w.sent.at(-1)?.text ?? '')).toBe(p)
+  expect(w.pool).toEqual([])
+})
+
+test('of two free members of the role, the one free longest gets the task', async () => {
+  const { w, fleet, q } = await crew(research, research)
+  await fleet.task(q, { text: 'Warm up.' })
+  const a = taskIdOf(w.sent.at(-1)?.text ?? '')
+  w.texts.set('q1', [{ at: 50_000, text: `done ${a}` }])
+  await fleet.refresh()
+  await fleet.task('research', { text: 'Find the leak.' })
+  expect(w.sent.at(-1)?.id).toBe('m1')
+})
+
+test('a member works through its own queue before it takes from the pool', async () => {
+  const { w, fleet, q } = await crew()
+  await fleet.task(q, { text: 'Busy.' })
+  const a = taskIdOf(w.sent.at(-1)?.text ?? '')
+  await fleet.task(q, { text: 'Own.' })
+  const own = w.roster.q1?.queue?.[0]?.id ?? ''
+  await fleet.task('research', { text: 'Pooled.' })
+  const p = w.pool[0]?.id ?? ''
+  w.texts.set('q1', [{ at: 30_000, text: `done ${a}` }])
+  await fleet.refresh()
+  expect(taskIdOf(w.sent.at(-1)?.text ?? '')).toBe(own)
+  expect(w.pool.map(t => t.id)).toEqual([p])
+})
+
+test('a pooled task with after waits for that task, then goes to the member free longest', async () => {
+  const { w, fleet, q } = await crew(research, research)
+  await fleet.task(q, { text: 'Build it.' })
+  const a = taskIdOf(w.sent.at(-1)?.text ?? '')
+  const out = await fleet.task('research', { text: 'Review it.', after: a })
+  const p = w.pool[0]?.id ?? ''
+  expect(out).toEqual({ ok: true, text: `queued task ${p} for the next free research member, after task ${a}` })
+  await fleet.refresh()
+  expect(w.sent.length).toBe(1)
+  w.texts.set('q1', [{ at: 30_000, text: `done ${a}` }])
+  await fleet.refresh()
+  expect(w.sent.at(-1)?.id).toBe('m1')
+  expect(taskIdOf(w.sent.at(-1)?.text ?? '')).toBe(p)
+})
+
+test('a task for a role nobody on the team has is refused and pools nothing', async () => {
+  const { w, fleet } = await crew()
+  expect(await fleet.task('local', { text: 'Run the build.' })).toEqual({ ok: false, text: 'no local member on the team; hire one with fleet_hire' })
+  expect(w.pool).toEqual([])
+  expect(w.sent).toEqual([])
+})
+
+test('a pooled task whose role has left the team is told to the boss once', async () => {
+  const { w, fleet, q } = await crew()
+  await fleet.task(q, { text: 'Busy.' })
+  await fleet.task('research', { text: 'Find the leak.' })
+  const p = w.pool[0]?.id ?? ''
+  await fleet.drop(q)
+  await fleet.refresh()
+  await fleet.refresh()
+  expect(w.prompts).toEqual([`queued task ${p} waits for a research member, and the team has none. Hire one with fleet_hire, or cancel it with fleet_cancel.`])
+})
+
+test('a pooled task can be taken off the pool by its id', async () => {
+  const { w, fleet, q } = await crew()
+  await fleet.task(q, { text: 'Busy.' })
+  await fleet.task('research', { text: 'Find the leak.' })
+  const p = w.pool[0]?.id ?? ''
+  expect(await fleet.cancelById(p)).toEqual({ ok: true, text: `took task ${p} off the pool` })
+  expect(w.pool).toEqual([])
+  expect(await fleet.cancelById(p)).toEqual({ ok: false, text: `no task ${p} on the team` })
+})
+
+test('a task id alone cancels a queued task or an open task, wherever it is on the team', async () => {
+  const { w, fleet, q } = await crew()
+  await fleet.task(q, { text: 'Busy.' })
+  const a = taskIdOf(w.sent.at(-1)?.text ?? '')
+  await fleet.task(q, { text: 'Next.' })
+  const b = w.roster.q1?.queue?.[0]?.id ?? ''
+  expect(await fleet.cancelById(b)).toEqual({ ok: true, text: `took task ${b} off the queue for quorum-63` })
+  expect(await fleet.cancelById(a)).toEqual({ ok: true, text: `cancelled task ${a} for quorum-63` })
+  expect(w.sent.at(-1)).toEqual({ id: 'q1', text: cancelMessage(a) })
+})
+
+test('a task for a role whose only free member cannot be reached is an error, and the task stays in the pool', async () => {
+  const { w, fleet } = await crew()
+  w.refuse.set('q1', 'session gone')
+  const out = await fleet.task('research', { text: 'Find the leak.' })
+  const id = w.pool[0]?.id ?? ''
+  expect(id).toMatch(/^[a-z0-9]{6}$/)
+  expect(w.roster.q1?.queue).toBeUndefined()
+  expect(out).toEqual({ ok: false, text: `could not reach quorum-63: session gone; task ${id} stays in the pool` })
+})
+
+test('a pooled task skips a member it cannot reach and goes to the next free one', async () => {
+  const { w, fleet } = await crew(research, research)
+  w.refuse.set('q1', 'session gone')
+  const out = await fleet.task('research', { text: 'Find the leak.' })
+  const id = taskIdOf(w.sent.at(-1)?.text ?? '')
+  expect(w.sent.at(-1)?.id).toBe('m1')
+  expect(out).toEqual({ ok: true, text: `sent mnemos-9e task ${id}` })
+  expect(w.pool).toEqual([])
+  expect(w.roster.q1?.queue).toBeUndefined()
+})
+
+test('a pooled task waits for a member that has not answered its briefing', async () => {
+  const { w, fleet } = world()
+  const [q] = await fleet.refresh()
+  await fleet.brief(q!, research)
+  w.sent.length = 0
+  const out = await fleet.task('research', { text: 'Find the leak.' })
+  const p = w.pool[0]?.id ?? ''
+  expect(out).toEqual({ ok: true, text: `queued task ${p} for the next free research member` })
+  expect(w.sent).toEqual([])
+  w.replies.set('q1', 20_000)
+  await fleet.refresh()
+  expect(taskIdOf(w.sent.at(-1)?.text ?? '')).toBe(p)
+})
+
+test('a pooled task stuck for want of a member is told again when the role leaves a second time', async () => {
+  const { w, fleet, q } = await crew()
+  await fleet.task(q, { text: 'Busy.' })
+  await fleet.task('research', { text: 'Find the leak.' })
+  await fleet.drop(q)
+  await fleet.refresh()
+  w.replies.delete('q1')
+  await fleet.brief(q, research)
+  await fleet.refresh()
+  expect(w.pool[0]?.stuck).toBeUndefined()
+  await fleet.drop(q)
+  await fleet.refresh()
+  expect(w.prompts.filter(t => t.includes('waits for a research member')).length).toBe(2)
 })

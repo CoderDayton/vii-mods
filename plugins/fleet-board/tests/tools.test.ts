@@ -9,6 +9,7 @@ const PEER: Peer = { id: 'q1', pid: 1, name: 'quorum-63', dir: '/p/quorum', stat
 const deps = (drop: () => Promise<never>) => ({
   fleet: { refresh: async () => [PEER], drop } as unknown as Fleet,
   roster: async () => ({ q1: { name: 'quorum-63', dir: '/p/quorum', role: 'research' as const, briefedAt: 1 } }),
+  pool: async () => [],
   now: async () => 0,
 })
 

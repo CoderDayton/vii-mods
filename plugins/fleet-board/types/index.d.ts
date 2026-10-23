@@ -40,6 +40,8 @@ export type Task = {
 
 export type QueuedTask = Brief & { id: string; after?: string; queuedAt: number; stuck?: string }
 
+export type PooledTask = QueuedTask & { role: RoleId }
+
 export type Hire = {
   name: string
   dir: string
@@ -61,6 +63,7 @@ declare module 'claude-code' {
     'fleet-board': {
       peers: Peer[]
       roster: Record<string, Hire>
+      pool: PooledTask[]
       notes: Note[]
       boss: string
       selected: string

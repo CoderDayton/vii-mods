@@ -1,6 +1,7 @@
 import type { Elements, RenderSurface } from 'claude-code'
 
 import type { Note } from './fleet'
+import type { PooledTask } from '../types'
 import { BACK_LABEL, CLOSE_LABEL, frameOf, REFRESH_LABEL } from './view'
 import type { Detail, Line, Row, Tone } from './view'
 
@@ -12,6 +13,7 @@ export type PaneModel = {
   columns: number
   rows: Row[]
   notes: Note[]
+  pool?: readonly PooledTask[]
   detail?: Detail
 }
 
@@ -57,7 +59,7 @@ const sectionLine = (els: Els, a: PaneActions, line: Line, key: string, member: 
 // back them up.
 export const paneView = (els: Els, m: PaneModel, a: PaneActions) => {
   const { Box, Text, Button } = els
-  const frame = frameOf(m.rows, m.notes, m.columns, m.detail === undefined ? {} : { detail: m.detail })
+  const frame = frameOf(m.rows, m.notes, m.columns, m)
   return (
     <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1} gap={1}>
       {lineView(els, frame.header, 'header')}

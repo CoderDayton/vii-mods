@@ -3,10 +3,10 @@ import type { Hook, PromptComposeSection, Register } from 'claude-code'
 
 import { parseCommand } from '../src/commands'
 import { createFleet } from '../src/fleet'
-import type { Fleet, Io } from '../src/fleet'
+import type { Box, Fleet, Io } from '../src/fleet'
 import { readOptions } from '../src/options'
 import type { Config } from '../src/options'
-import { bossSection, employeeSection, hireKey, parseEmployment, parseTeam, statusLine, teamKey } from '../src/team'
+import { bossSection, employeeSection, hireKey, parseEmployment, parsePool, parseTeam, poolKey, statusLine, teamKey } from '../src/team'
 import type { Hire } from '../src/team'
 import { exclusive } from '../src/tick'
 import { asToolResult, runTool, TOOL_PREFIX, TOOL_SPECS } from '../src/tools'
@@ -18,6 +18,7 @@ import { rowsOf } from '../src/view'
 
 const peersAtom = atom({ plugin: 'fleet-board', key: 'peers' } as const, [])
 const rosterAtom = atom({ plugin: 'fleet-board', key: 'roster' } as const, {})
+const poolAtom = atom({ plugin: 'fleet-board', key: 'pool' } as const, [])
 const notesAtom = atom({ plugin: 'fleet-board', key: 'notes' } as const, [])
 const bossAtom = atom({ plugin: 'fleet-board', key: 'boss' } as const, 'boss')
 const selectedAtom = atom({ plugin: 'fleet-board', key: 'selected' } as const, '')
@@ -56,13 +57,27 @@ const stopPolling = (): void => {
 
 let startConfig: Config | null = null
 
+const kept = <T,>(get: () => Promise<T>, change: (fn: (v: T) => T) => Promise<unknown>, save: (v: T) => Promise<void>): Box<T> => {
+  let saving: Promise<unknown> = Promise.resolve()
+  return {
+    get,
+    set: async fn => {
+      await change(fn)
+      const next = saving.then(async () => save(await get()))
+      saving = next.catch(() => undefined)
+      await next
+    },
+  }
+}
+
 const startHook: Hook<'session.start'> = async ($, e, next) => {
   const self = await $.session.id()
   const team = parseTeam(await $.store.get(teamKey(self)))
   await update($, rosterAtom, () => team)
+  const pool = parsePool(await $.store.get(poolKey(self)))
+  await update($, poolAtom, () => pool)
   // One reader per session start: its byte cursors belong to the io that uses them.
   const transcripts = createTranscriptReader(argv => $.process.run(argv).then(r => r.stdout))
-  let saving: Promise<unknown> = Promise.resolve()
   reader = transcripts
   io = {
     run: (argv, init) => $.process.run(argv, init),
@@ -82,16 +97,8 @@ const startHook: Hook<'session.start'> = async ($, e, next) => {
     },
     state: {
       peers: { get: () => read($, peersAtom), set: async fn => void (await update($, peersAtom, fn)) },
-      // The team is kept in the store as well as the atom, so a restarted boss has it again.
-      roster: {
-        get: () => read($, rosterAtom),
-        set: async fn => {
-          await update($, rosterAtom, fn)
-          const save = saving.then(async () => $.store.set(teamKey(self), await read($, rosterAtom)))
-          saving = save.catch(() => undefined)
-          await save
-        },
-      },
+      roster: kept(() => read($, rosterAtom), fn => update($, rosterAtom, fn), v => $.store.set(teamKey(self), v)),
+      pool: kept(() => read($, poolAtom), fn => update($, poolAtom, fn), v => $.store.set(poolKey(self), v)),
       notes: { get: () => read($, notesAtom), set: async fn => void (await update($, notesAtom, fn)) },
       boss: { get: () => read($, bossAtom), set: async fn => void (await update($, bossAtom, fn)) },
     },
@@ -139,7 +146,8 @@ const withReplies = async (team: Record<string, Hire>): Promise<Record<string, H
 const composeHook: Hook<'prompt.compose'> = async ($, e, next) => {
   const out = await next(e)
   const self = await $.session.id()
-  const team = bossSection(await withReplies(parseTeam(await $.store.get(teamKey(self)))), await $.clock.now())
+  const roster = await withReplies(parseTeam(await $.store.get(teamKey(self))))
+  const team = bossSection(roster, await $.clock.now(), parsePool(await $.store.get(poolKey(self))))
   const employment = parseEmployment(await $.store.get(hireKey(self)))
   const added: PromptComposeSection[] = []
   if (team !== null) added.push({ id: 'fleet-board:boss', text: team, scope: 'session' })
@@ -164,7 +172,7 @@ const startPolling = (f: Fleet, e: Env): void => {
 }
 
 const showStatus = async (i: Io, e: Env): Promise<void> => {
-  const text = statusLine(await i.state.roster.get())
+  const text = statusLine(await i.state.roster.get(), await i.state.pool.get())
   if (text === shownStatus) return
   shownStatus = text
   e.status(text)
@@ -173,7 +181,7 @@ const showStatus = async (i: Io, e: Env): Promise<void> => {
 // With the pane closed and nobody on the team there is nothing to read, so the tick skips the scan and the transcript reads.
 // A tick that is still running makes the next one skip, so a slow scan cannot announce the same notice twice.
 const tick = exclusive(async (f: Fleet, i: Io, e: Env): Promise<void> => {
-  if (paneOpen || Object.keys(await i.state.roster.get()).length > 0) await f.refresh()
+  if (paneOpen || Object.keys(await i.state.roster.get()).length > 0 || (await i.state.pool.get()).length > 0) await f.refresh()
   await showStatus(i, e)
 })
 
@@ -207,6 +215,7 @@ export const register: Register = (on, options) => {
     const out = await runTool(spec.name as ToolName, e as unknown as Record<string, unknown>, {
       fleet: f,
       roster: () => read($, rosterAtom),
+      pool: () => read($, poolAtom),
       now: () => $.clock.now(),
     })
     return asToolResult(out)
@@ -241,6 +250,7 @@ export const register: Register = (on, options) => {
         columns: e.props.bodyColumns ?? e.viewport?.columns ?? DEFAULT_COLUMNS,
         rows,
         notes: (await read($, notesAtom)).slice(-NOTES_SHOWN),
+        pool: await read($, poolAtom),
         ...(row === undefined || hire === undefined ? {} : { detail: { row, hire, now } }),
       },
       {

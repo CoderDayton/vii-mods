@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { bossLabel, bossSection, employeeSection, hireKey, noticeOf, parseEmployment, parseTeam, STALE_MS, statusLine, teamKey, teamStatus } from '../src/team'
+import { bossLabel, bossSection, employeeSection, hireKey, noticeOf, parseEmployment, parsePool, parseTeam, poolKey, STALE_MS, statusLine, teamKey, teamStatus } from '../src/team'
 
 test('the store keeps the team under the boss and each hire under the employee', () => {
   expect(teamKey('me')).toBe('team:me')
@@ -246,6 +246,36 @@ test('the boss section names fleet_cancel and how to brief a task', () => {
   expect(text).toContain('done')
   expect(text).toContain('scope')
   expect(text).toContain('after')
+})
+
+test('the pool is kept under the boss, and a stored pool keeps only well-formed tasks with a known role', () => {
+  expect(poolKey('me')).toBe('pool:me')
+  const good = { id: 'p1p1p1', role: 'research', text: 'Find it.', after: 'a1a1a1', queuedAt: 3 }
+  expect(parsePool([good, { ...good, role: 'boss' }, { id: 'x' }, 'junk'])).toEqual([good])
+  expect(parsePool('junk')).toEqual([])
+})
+
+test('the team status lists the pool after the members', () => {
+  const pool = [
+    { id: 'p1p1p1', role: 'research' as const, text: 'Find the leak.\nThen fix it.', queuedAt: 3 },
+    { id: 'p2p2p2', role: 'local' as const, text: 'Run the build.', after: 'a1a1a1', queuedAt: 4 },
+  ]
+  const text = teamStatus({ q1: BASE }, 0, pool)
+  expect(text).toContain('Unassigned:\n- p1p1p1 for Research: Find the leak.\n- p2p2p2 for Local execution after a1a1a1: Run the build.')
+  expect(bossSection({ q1: BASE }, 0, pool)).toContain('- p1p1p1 for Research: Find the leak.')
+})
+
+test('the team status still lists the pool when the team is empty', () => {
+  const pool = [{ id: 'p1p1p1', role: 'research' as const, text: 'Find the leak.', queuedAt: 3 }]
+  expect(teamStatus({}, 0, pool)).toBe('Your team is empty.\n\nUnassigned:\n- p1p1p1 for Research: Find the leak.')
+})
+
+test('the boss section says a task can go to a role', () => {
+  expect(bossSection({ q1: BASE }, 0)).toContain('role')
+})
+
+test('the status line counts tasks waiting in the pool as unassigned', () => {
+  expect(statusLine({ q1: BASE }, [{ id: 'p1', role: 'research', text: 'x', queuedAt: 1 }])).toBe('fleet 1 on team · 1 unassigned')
 })
 
 test('the status line counts the team and its open, blocked, done and queued tasks, and is empty with no team', () => {

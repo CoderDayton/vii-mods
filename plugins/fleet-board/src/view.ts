@@ -4,7 +4,7 @@ import { roleOf } from './roles'
 import type { Hire, Note } from './fleet'
 import { endedIn, quietSince, STALE_MS } from './team'
 import { isQuestion, lineOf } from './transcript'
-import type { Task, TaskStatus } from '../types'
+import type { PooledTask, Task, TaskStatus } from '../types'
 
 export type Flag = 'asked' | 'stale' | ''
 
@@ -241,7 +241,19 @@ const teamSection = (team: readonly Row[], width: number): Section => {
   return { title: 'team', lines, press }
 }
 
-export const frameOf = (rows: readonly Row[], notes: readonly Note[], columns: number, view: { detail?: Detail } = {}): Frame => {
+const poolSection = (pool: readonly PooledTask[], width: number): Section => ({
+  title: 'unassigned',
+  lines: pool.flatMap(p =>
+    field(p.id, `for ${roleOf(p.role)?.label ?? p.role}${p.after === undefined ? '' : ` after ${p.after}`}: ${p.text}`, width, NOTE_LINES),
+  ),
+})
+
+export const frameOf = (
+  rows: readonly Row[],
+  notes: readonly Note[],
+  columns: number,
+  view: { detail?: Detail; pool?: readonly PooledTask[] } = {},
+): Frame => {
   const width = bodyColumns(columns)
   const edge = Math.max(MIN_BODY, columns - PANE_CHROME)
   const header = fit([seg('fleet', 'bold'), seg(`  ${headline(rows)}`, 'dim')], edge)
@@ -258,6 +270,7 @@ export const frameOf = (rows: readonly Row[], notes: readonly Note[], columns: n
   const others = rows.filter(r => r.role === '—')
   const sections: Section[] = []
   if (team.length > 0) sections.push(teamSection(team, width))
+  if (view.pool !== undefined && view.pool.length > 0) sections.push(poolSection(view.pool, width))
   sections.push({ title: 'other sessions', lines: others.length > 0 ? tableLines(others, width) : [[seg('no other sessions', 'dim')]] })
   if (notes.length > 0) sections.push({ title: 'notes', lines: notes.flatMap(n => noteLines(n, width)) })
   return { header, sections, footer: fit([seg(buttons), seg('esc closes', 'dim')], edge), back: false }
