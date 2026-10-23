@@ -223,6 +223,39 @@ test('fleet_hire of a session already on the team is an error and changes nothin
   expect((await tool($, 'fleet_status')).text).toContain('quorum-63 (session q1): Research')
 })
 
+const OTHER_BOSS = { id: 'b1', name: 'boss-1', dir: '/p/boss', at: 4 }
+
+test('an employee cannot hire while its boss is running', async ($, on) => {
+  const w = world(on, { 'hire:me': { bossId: 'b1', bossName: 'boss-1', role: 'research' } })
+  w.sessions.push(OTHER_BOSS)
+  await $.session.start(LIVE)
+  expect(await tool($, 'fleet_hire', { session: 'quorum', role: 'local' })).toEqual({
+    text: "you are on boss-1's team, so you cannot hire; ask boss-1 to hire quorum-63",
+    isError: true,
+  })
+  expect(w.sent).toEqual([])
+  expect((await tool($, 'fleet_status')).text).toBe('Your team is empty.')
+})
+
+test('a session on another running boss team cannot be hired', async ($, on) => {
+  const w = world(on, { 'hire:q1': { bossId: 'b1', bossName: 'boss-1', role: 'local' } })
+  w.sessions.push(OTHER_BOSS)
+  await $.session.start(LIVE)
+  expect(await tool($, 'fleet_hire', { session: 'quorum', role: 'research' })).toEqual({
+    text: "quorum-63 is on boss-1's team; boss-1 must drop it first",
+    isError: true,
+  })
+  expect(w.sent).toEqual([])
+})
+
+test('a team whose boss session is gone holds no one: its employee can hire and be hired', async ($, on) => {
+  const gone = { bossId: 'b1', bossName: 'boss-1', role: 'local' }
+  const w = world(on, { 'hire:me': gone, 'hire:q1': gone })
+  await $.session.start(LIVE)
+  expect(await tool($, 'fleet_hire', { session: 'quorum', role: 'research' })).toEqual({ text: 'briefed quorum-63 as Research', isError: false })
+  expect(JSON.stringify(w.sent[0]?.to)).toContain('q1')
+})
+
 test('fleet_hire of a session outside the boss root is an error that says so, and sends nothing', async ($, on) => {
   const w = world(on)
   w.sessions.push({ id: 'o1', name: 'outsider-7', dir: '/elsewhere/app', state: 'busy', at: 4 })

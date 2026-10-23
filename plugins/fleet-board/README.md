@@ -50,7 +50,7 @@ The boss session has five model tools. The model names them `mcp__fleet-board__<
 
 | Tool | Input | Does |
 | --- | --- | --- |
-| `fleet_hire` | `session`, `role` | Adds the session to the team and sends the briefing. Refused when the session is already on the team. |
+| `fleet_hire` | `session`, `role` | Adds the session to the team and sends the briefing. Refused when the session is already on the team, when it is on another running boss's team, or when the caller is itself on a running boss's team. A team whose boss session is gone holds no one. |
 | `fleet_task` | `session` or `role`, `text`, optional `scope`, `done`, `after` | Queues one task with a six-character id, and sends it at once when nothing holds it. A session must be on the team; a role must have a member on it. |
 | `fleet_cancel` | `session`, `task`, or both | Cancels the open task and tells the member, or, with the id of a queued task, takes it off the queue. With `task` alone, finds that task on the team or in the pool and cancels it. |
 | `fleet_drop` | `session` | Takes the session off the team and tells it. |

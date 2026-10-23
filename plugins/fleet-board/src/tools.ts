@@ -6,7 +6,7 @@ import { resolvePeer } from './peers'
 import { roleOf, ROLES } from './roles'
 import { teamStatus } from './team'
 import type { Hire } from './team'
-import type { PooledTask } from '../types'
+import type { Employment, PooledTask } from '../types'
 
 // The fleet tools the boss calls. The model names each one mcp__fleet-board__<name>.
 export const TOOL_PREFIX = 'mcp__fleet-board__'
@@ -82,6 +82,8 @@ export type ToolDeps = {
   roster: () => Promise<Readonly<Record<string, Hire>>>
   pool: () => Promise<readonly PooledTask[]>
   now: () => Promise<number>
+  selfId: () => Promise<string>
+  employment: (sessionId: string) => Promise<Employment | null>
 }
 
 type Input = Readonly<Record<string, unknown>>
@@ -124,6 +126,13 @@ const peerOf = async (input: Input, { fleet }: ToolDeps): Promise<Peer | string>
   return 'peer' in hidden ? `${hidden.peer.name} is outside this project's root` : found.error
 }
 
+const liveBoss = async (deps: ToolDeps, sessionId: string): Promise<Employment | null> => {
+  const job = await deps.employment(sessionId)
+  if (job === null) return null
+  const running = [...(await deps.fleet.refresh()), ...deps.fleet.outside()]
+  return running.some(p => p.id === job.bossId) ? job : null
+}
+
 const withPeer = (run: (peer: Peer, input: Input, deps: ToolDeps) => Promise<ToolReply>) => async (input: Input, deps: ToolDeps): Promise<ToolReply> => {
   const peer = await peerOf(input, deps)
   return typeof peer === 'string' ? reply(peer, true) : run(peer, input, deps)
@@ -140,6 +149,11 @@ const TOOLS: Record<ToolName, (input: Input, deps: ToolDeps) => Promise<ToolRepl
     if (role === undefined) return reply(`unknown role "${argOf(input, 'role')}"; use ${ROLE_LIST}`, true)
     return withPeer(async peer => {
       if ((await deps.roster())[peer.id] !== undefined) return reply(`${peer.name} is already on the team; fleet_drop it first`, true)
+      const self = await deps.selfId()
+      const mine = await liveBoss(deps, self)
+      if (mine !== null) return reply(`you are on ${mine.bossName}'s team, so you cannot hire; ask ${mine.bossName} to hire ${peer.name}`, true)
+      const theirs = await liveBoss(deps, peer.id)
+      if (theirs !== null && theirs.bossId !== self) return reply(`${peer.name} is on ${theirs.bossName}'s team; ${theirs.bossName} must drop it first`, true)
       return fromResult(await deps.fleet.brief(peer, role))
     })(input, deps)
   },

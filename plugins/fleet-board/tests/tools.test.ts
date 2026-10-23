@@ -11,6 +11,8 @@ const deps = (drop: () => Promise<never>) => ({
   roster: async () => ({ q1: { name: 'quorum-63', dir: '/p/quorum', role: 'research' as const, briefedAt: 1 } }),
   pool: async () => [],
   now: async () => 0,
+  selfId: async () => 'me',
+  employment: async () => null,
 })
 
 // The engine takes a tool's output as a string, an array, or undefined. An object such as { content, isError } is refused.

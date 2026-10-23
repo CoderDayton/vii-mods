@@ -217,6 +217,8 @@ export const register: Register = (on, options) => {
       roster: () => read($, rosterAtom),
       pool: () => read($, poolAtom),
       now: () => $.clock.now(),
+      selfId: () => $.session.id(),
+      employment: async id => parseEmployment(await $.store.get(hireKey(id))),
     })
     return asToolResult(out)
   }).catch(($, e, next) => (next.called ? next(e) : asToolResult({ text: 'fleet-board could not run the tool.', isError: true })))
