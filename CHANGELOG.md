@@ -2,12 +2,6 @@
 
 All notable changes to the vii-mods marketplace are listed here, newest first, each marked with the mod it belongs to. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The mods are not versioned yet (each is 0.1.0), so changes are grouped by the date they reached GitHub. Changes not yet there are listed under Unreleased.
 
-## Unreleased
-
-### Fixed
-
-- **fleet-board:** keep each session on one team: `fleet_hire` refuses a session that is on another running boss's team, and refuses to hire from a session that is itself an employee. A team whose boss session is gone holds no one
-
 ## 2026-10-22
 
 ### Added
@@ -34,6 +28,7 @@ All notable changes to the vii-mods marketplace are listed here, newest first, e
 ### Fixed
 
 - **fleet-board:** keep both changes when two team updates land at once, such as a task call during the background scan ([`7ab294c`])
+- **fleet-board:** keep each session on one team: `fleet_hire` refuses a session that is on another running boss's team, and refuses to hire from a session that is itself an employee. A team whose boss session is gone holds no one ([`c70e6ca`])
 
 ## 2026-10-17
 
@@ -129,6 +124,7 @@ _First release of the marketplace._
 [`a76c7be`]: https://github.com/CoderDayton/vii-mods/commit/a76c7be
 [`b85e857`]: https://github.com/CoderDayton/vii-mods/commit/b85e857
 [`b00b932`]: https://github.com/CoderDayton/vii-mods/commit/b00b932
+[`c70e6ca`]: https://github.com/CoderDayton/vii-mods/commit/c70e6ca
 [`38ecb99`]: https://github.com/CoderDayton/vii-mods/commit/38ecb99
 [`9d8e735`]: https://github.com/CoderDayton/vii-mods/commit/9d8e735
 [`ee9bcda`]: https://github.com/CoderDayton/vii-mods/commit/ee9bcda
