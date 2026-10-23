@@ -6,6 +6,9 @@ All notable changes to the vii-mods marketplace are listed here, newest first, e
 
 ### Added
 
+- **fleet-board:** give `fleet_task` a `role` in place of a session. The task waits in a team-wide pool and goes to the member of that role that has been free longest, after the tasks given to that member by name. A pooled task goes only to a member that has answered its briefing, and skips a member it cannot reach
+- **fleet-board:** let `fleet_cancel` take a task id alone and find the task wherever it is: open, queued or in the pool
+- **fleet-board:** say what holds a queued task in the `fleet_task` answer: an `after` task, a task ahead of it, a report the boss has not had yet, or a session that is gone
 - **fleet-board:** queue tasks per member: a task for a busy member waits and is sent when the member is free, and `after` holds a task until another member's task is done
 - **fleet-board:** add `fleet_cancel`, which cancels a member's open task and tells it, or takes a queued task off the queue
 - **fleet-board:** give `fleet_task` optional `scope` and `done` fields. The task message states the goal, scope, done condition and the report it wants
