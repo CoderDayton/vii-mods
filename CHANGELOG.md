@@ -2,6 +2,12 @@
 
 All notable changes to the vii-mods marketplace are listed here, newest first, each marked with the mod it belongs to. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The mods are not versioned yet (each is 0.1.0), so changes are grouped by the date they reached GitHub. Changes not yet there are listed under Unreleased.
 
+## 2026-10-24
+
+### Fixed
+
+- **fleet-board:** send a member its next task as soon as its last one is done or blocked. The task no longer waits for the boss to get the done notice, which never came while the boss was busy in a long turn, so the member stayed `done` ([`4ad7052`])
+
 ## 2026-10-22
 
 ### Added
@@ -118,6 +124,7 @@ _First release of the marketplace._
 
 [`2e2065b`]: https://github.com/CoderDayton/vii-mods/commit/2e2065b
 [`4d253a5`]: https://github.com/CoderDayton/vii-mods/commit/4d253a5
+[`4ad7052`]: https://github.com/CoderDayton/vii-mods/commit/4ad7052
 [`55e40f3`]: https://github.com/CoderDayton/vii-mods/commit/55e40f3
 [`7ab294c`]: https://github.com/CoderDayton/vii-mods/commit/7ab294c
 [`9c1cc31`]: https://github.com/CoderDayton/vii-mods/commit/9c1cc31
