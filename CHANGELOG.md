@@ -2,6 +2,28 @@
 
 All notable changes to the vii-mods marketplace are listed here, newest first, each marked with the mod it belongs to. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The mods are not versioned yet (each is 0.1.0), so changes are grouped by the date they reached GitHub. Changes not yet there are listed under Unreleased.
 
+## Unreleased
+
+### Added
+
+- **fleet-board:** add `/fleet init`, which asks in Claude Code's question dialog which free sessions to hire and the role of each, then hires them and makes this session their boss. A turn then asks you the team goal and splits it into tasks
+- **fleet-board:** add `fleet_message` and `fleet_post`: anyone on a team can message a teammate or the boss, and post what it works on to a shared board. The boss keeps a team file at `$XDG_RUNTIME_DIR/fleet-board/team-<boss>.md` (or `~/.cache/fleet-board/`) with the goal, the board and the messages
+- **fleet-board:** an employee's `fleet_task` asks its boss, whose next scan queues the task
+- **fleet-board:** the pane hires a session in a role, sets a member's role, and fires a member
+- **fleet-board:** employees are told to research design decisions and bring a pick with evidence to the boss, who decides; only commits, pushes, deletions and dependency changes go to the user
+
+### Changed
+
+- **fleet-board:** an employee of a running boss can no longer cancel tasks or drop members
+- **fleet-board:** the pane's notes box is now an activity list: newest first, each entry with its age, including what the boss was told. The empty other sessions box is gone
+
+### Fixed
+
+- **fleet-board:** `/clear` in a boss no longer loses its team. The team moves to the new session id, and the tick that sends tasks and notices keeps running
+- **fleet-board:** `/clear` in an employee no longer drops it from the team; the boss follows it to its new session id
+- **fleet-board:** one fleet tool call scans the sessions once
+- **fleet-board:** a change found while a fleet tool ran no longer fails with "could not tell the boss"; it reaches the boss on the next tick
+
 ## 2026-10-24
 
 ### Fixed
