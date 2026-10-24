@@ -82,12 +82,7 @@ const whyStuck = (roster: Readonly<Roster>, pool: readonly PooledTask[], taskId:
   return waiting ? null : 'is no longer on the team'
 }
 
-const unsettled = (hire: Hire, task: Task, now: number): boolean => {
-  const notice = noticeOf(hire.name, task, now)
-  return notice !== null && task.announced !== notice.key
-}
-
-export const holdOf = (roster: Readonly<Roster>, peers: readonly Peer[], id: string, entry: QueuedTask, now: number): string | null => {
+export const holdOf = (roster: Readonly<Roster>, peers: readonly Peer[], id: string, entry: QueuedTask): string | null => {
   const hire = roster[id]
   if (hire === undefined) return 'until it is on the team'
   if (entry.after !== undefined && !isDone(roster, entry.after)) return `after task ${entry.after}`
@@ -95,17 +90,15 @@ export const holdOf = (roster: Readonly<Roster>, peers: readonly Peer[], id: str
   const at = queue.findIndex(q => q.id === entry.id)
   const ahead = (at === -1 ? queue : queue.slice(0, at)).at(-1)
   if (ahead !== undefined) return `behind task ${ahead.id}`
-  const task = hire.task
-  if (task?.status === 'sent') return `behind task ${task.id}`
-  if (task !== undefined && unsettled(hire, task, now)) return `until you have the report of task ${task.id}`
+  if (hire.task?.status === 'sent') return `behind task ${hire.task.id}`
   return peers.some(p => p.id === id) ? null : 'until its session is back'
 }
 
 const freeSince = (hire: Hire): number => hire.task?.endedAt ?? hire.readyAt ?? hire.briefedAt
 
-export const takerOf = (roster: Readonly<Roster>, peers: readonly Peer[], entry: PooledTask, now: number, skip: ReadonlySet<string>): string | null =>
+export const takerOf = (roster: Readonly<Roster>, peers: readonly Peer[], entry: PooledTask, skip: ReadonlySet<string>): string | null =>
   Object.entries(roster)
-    .filter(([id, hire]) => hire.role === entry.role && hire.readyAt !== undefined && !skip.has(id) && holdOf(roster, peers, id, entry, now) === null)
+    .filter(([id, hire]) => hire.role === entry.role && hire.readyAt !== undefined && !skip.has(id) && holdOf(roster, peers, id, entry) === null)
     .sort(([, a], [, b]) => freeSince(a) - freeSince(b))[0]?.[0] ?? null
 
 export type Notice = {

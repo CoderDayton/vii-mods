@@ -654,7 +654,7 @@ test('a task for a member with a task in flight is queued, and sent once that ta
   expect(w.roster.q1?.history?.map(t => [t.id, t.status])).toEqual([[a, 'done']])
 })
 
-test('the done notice of a task reaches the boss before the next queued task is sent', async () => {
+test('the next queued task goes out on the scan that sees the last one done; the done notice follows when the boss can take it', async () => {
   const { w, fleet, q } = await hired()
   await fleet.task(q, { text: 'First.' })
   const a = taskIdOf(w.sent[0]?.text ?? '')
@@ -662,10 +662,11 @@ test('the done notice of a task reaches the boss before the next queued task is 
   w.texts.set('q1', [{ at: 30_000, text: `done ${a}` }])
   w.promptFails = 1
   await fleet.refresh()
-  expect(w.sent.length).toBe(1)
-  await fleet.refresh()
-  expect(w.prompts[0]).toContain(`task ${a} is done`)
   expect(w.sent.length).toBe(2)
+  expect(w.prompts).toEqual([])
+  await fleet.refresh()
+  expect(w.prompts.length).toBe(1)
+  expect(w.prompts[0]).toContain(`task ${a} is done`)
 })
 
 test('a blocked task frees its member for the next queued task', async () => {
@@ -868,7 +869,7 @@ test('a queued task whose after task was cancelled is told to the boss once', as
   ])
 })
 
-test('a queued reply names what holds the task: here, a report the boss has not had yet', async () => {
+test('a member that is done gets its next task at once, even while the boss is too busy for the done notice', async () => {
   const { w, fleet, q } = await hired()
   await fleet.task(q, { text: 'First.' })
   const a = taskIdOf(w.sent.at(-1)?.text ?? '')
@@ -876,8 +877,26 @@ test('a queued reply names what holds the task: here, a report the boss has not 
   w.promptFails = 1
   await fleet.refresh()
   const out = await fleet.task(q, { text: 'Next.' })
+  const b = taskIdOf(w.sent.at(-1)?.text ?? '')
+  expect(b).not.toBe(a)
+  expect(out).toEqual({ ok: true, text: `sent quorum-63 task ${b}` })
+  expect(w.roster.q1?.task).toMatchObject({ id: b, status: 'sent' })
+  await fleet.refresh()
+  expect(w.prompts.length).toBe(1)
+  expect(w.prompts[0]).toContain(`task ${a} is done`)
+})
+
+test('a task queued after another goes out on the scan that sees that task done, while the boss is busy', async () => {
+  const { w, fleet, q } = await hired()
+  await fleet.task(q, { text: 'First.' })
+  const a = taskIdOf(w.sent.at(-1)?.text ?? '')
+  await fleet.task(q, { text: 'Next.', after: a })
   const b = w.roster.q1?.queue?.[0]?.id ?? ''
-  expect(out).toEqual({ ok: true, text: `queued task ${b} for quorum-63, until you have the report of task ${a}` })
+  w.texts.set('q1', [{ at: 30_000, text: `done ${a}` }])
+  w.promptFails = 5
+  await fleet.refresh()
+  expect(taskIdOf(w.sent.at(-1)?.text ?? '')).toBe(b)
+  expect(w.roster.q1?.task).toMatchObject({ id: b, status: 'sent' })
 })
 
 const crew = async (qRole = research, mRole = specialist) => {

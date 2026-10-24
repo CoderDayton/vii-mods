@@ -153,7 +153,7 @@ const sendHead = async (io: Io, id: string): Promise<Sent> => {
   const hire = roster[id]
   const head = hire?.queue?.[0]
   if (hire === undefined || head === undefined) return null
-  if (holdOf(roster, await io.state.peers.get(), id, head, await io.now()) !== null) return null
+  if (holdOf(roster, await io.state.peers.get(), id, head) !== null) return null
   const why = await io.send(id, taskMessage(await io.state.boss.get(), head.id, head))
   if (why !== null) {
     await addNote(io, false, `could not reach ${hire.name}: ${why}`)
@@ -187,7 +187,7 @@ const handOut = async (io: Io): Promise<Map<string, string>> => {
   for (const entry of await io.state.pool.get()) {
     const skip = new Set<string>()
     while ((await io.state.pool.get()).some(p => p.id === entry.id)) {
-      const taker = takerOf(await io.state.roster.get(), await io.state.peers.get(), entry, await io.now(), skip)
+      const taker = takerOf(await io.state.roster.get(), await io.state.peers.get(), entry, skip)
       if (taker === null) break
       const why = await handTo(io, entry, taker)
       if (why === null) failed.delete(entry.id)
@@ -211,7 +211,7 @@ const placed = async (io: Io, id: string): Promise<Result> => {
   for (const [memberId, hire] of members) {
     const entry = hire.queue?.find(q => q.id === id)
     if (entry === undefined) continue
-    const hold = holdOf(roster, await io.state.peers.get(), memberId, entry, await io.now()) ?? 'next in line'
+    const hold = holdOf(roster, await io.state.peers.get(), memberId, entry) ?? 'next in line'
     return addNote(io, true, `queued task ${id} for ${hire.name}, ${hold}`)
   }
   return addNote(io, false, `task ${id} is no longer on the team`)
