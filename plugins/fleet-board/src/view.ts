@@ -1,6 +1,6 @@
 import { baseName, fmtAge } from './peers'
 import type { Peer, PeerState } from './peers'
-import { roleOf } from './roles'
+import { roleOf, ROLES } from './roles'
 import type { Hire, Note } from './fleet'
 import { endedIn, quietSince, STALE_MS } from './team'
 import { isQuestion, lineOf } from './transcript'
@@ -73,10 +73,16 @@ export const headline = (rows: readonly Row[]): string => {
 export type Tone = 'plain' | 'bold' | 'dim' | 'success' | 'error' | 'warning'
 export type Seg = { text: string; tone: Tone }
 export type Line = Seg[]
-export type Section = { title: string; lines: Line[]; press?: Record<number, string> }
-export type Frame = { header: Line; sections: Section[]; footer: Line; back: boolean }
+export type Section = { title: string; lines: Line[]; press?: Record<number, string>; pressKey?: string }
+export type Action = { key: string; label: string }
+export type Frame = { header: Line; sections: Section[]; footer: Line; back: boolean; actions: Action[] }
 
-export type Detail = { row: Row; hire: Hire; now: number }
+export type Detail = { row: Row; hire?: Hire; now: number }
+
+const actionsOf = (hire: Hire | undefined): Action[] =>
+  hire === undefined
+    ? ROLES.map(r => ({ key: `hire:${r.id}`, label: `hire as ${r.label}` }))
+    : [...ROLES.filter(r => r.id !== hire.role).map(r => ({ key: `role:${r.id}`, label: `make ${r.label}` })), { key: 'fire', label: 'fire' }]
 
 // The Button labels. The terminal draws "[ label ]" around a label itself, so the labels carry no brackets and the
 // plain-text frame adds the one pair.
@@ -192,6 +198,7 @@ const field = (label: string, text: string, width: number, cap = REPLY_LINES): L
   capped(wrap(text, width - LABEL), cap).map((line, i) => [seg((i === 0 ? label : '').padEnd(LABEL), 'dim'), seg(line)])
 
 const detailLines = ({ row, hire, now }: Detail, width: number): Line[] => {
+  if (hire === undefined) return [...field('state', `${row.state}, not on the team`, width), ...field('folder', row.folder, width)]
   const task = hire.task
   const state = field('state', `${row.role}, ${row.waiting ? 'waiting' : 'ready'}, ${row.state}`, width)
   if (task === undefined) return [...state, ...field('task', 'none', width), ...queueFields(hire, width)]
@@ -221,13 +228,13 @@ const queueFields = (hire: Hire, width: number): Line[] => [
   ),
 ]
 
-const NOTE_WORD = 7
+const AGE_W = 5
+const ACTIVITY_LINES = 2
 
-// A note: ok or failed first, then its text wrapped under it.
-const noteLines = (n: Note, width: number): Line[] =>
-  capped(wrap(n.text, width - NOTE_WORD), NOTE_LINES).map((text, i) => [
-    i === 0 ? seg((n.ok ? 'ok' : 'failed').padEnd(NOTE_WORD), n.ok ? 'success' : 'error') : seg(' '.repeat(NOTE_WORD)),
-    seg(text, 'dim'),
+const activityLines = (n: Note, width: number, now: number): Line[] =>
+  capped(wrap(n.text, width - AGE_W), ACTIVITY_LINES).map((text, i) => [
+    seg((i === 0 ? fmtAge(now - n.at) : '').padEnd(AGE_W), 'dim'),
+    seg(text, n.ok ? 'plain' : 'error'),
   ])
 
 const teamSection = (team: readonly Row[], width: number): Section => {
@@ -252,7 +259,7 @@ export const frameOf = (
   rows: readonly Row[],
   notes: readonly Note[],
   columns: number,
-  view: { detail?: Detail; pool?: readonly PooledTask[] } = {},
+  view: { detail?: Detail; pool?: readonly PooledTask[]; now?: number } = {},
 ): Frame => {
   const width = bodyColumns(columns)
   const edge = Math.max(MIN_BODY, columns - PANE_CHROME)
@@ -264,6 +271,7 @@ export const frameOf = (
       sections: [{ title: view.detail.row.name, lines: detailLines(view.detail, width) }],
       footer: fit([seg(`[ ${BACK_LABEL} ]  ${buttons}`), seg('esc closes', 'dim')], edge),
       back: true,
+      actions: actionsOf(view.detail.hire),
     }
   }
   const team = rows.filter(r => r.role !== '—')
@@ -271,9 +279,11 @@ export const frameOf = (
   const sections: Section[] = []
   if (team.length > 0) sections.push(teamSection(team, width))
   if (view.pool !== undefined && view.pool.length > 0) sections.push(poolSection(view.pool, width))
-  sections.push({ title: 'other sessions', lines: others.length > 0 ? tableLines(others, width) : [[seg('no other sessions', 'dim')]] })
-  if (notes.length > 0) sections.push({ title: 'notes', lines: notes.flatMap(n => noteLines(n, width)) })
-  return { header, sections, footer: fit([seg(buttons), seg('esc closes', 'dim')], edge), back: false }
+  const otherPress = Object.fromEntries(others.map((r, i) => [i + 1, r.id]))
+  if (others.length > 0) sections.push({ title: 'other sessions', lines: tableLines(others, width), press: otherPress, pressKey: 'session' })
+  const now = view.now ?? Math.max(0, ...notes.map(n => n.at))
+  if (notes.length > 0) sections.push({ title: 'activity', lines: [...notes].reverse().flatMap(n => activityLines(n, width, now)) })
+  return { header, sections, footer: fit([seg(buttons), seg('esc closes', 'dim')], edge), back: false, actions: [] }
 }
 
 const plain = (line: Line): string => line.map(s => s.text).join('')

@@ -7,14 +7,13 @@ import type { Detail, Line, Row, Tone } from './view'
 
 export type Els = Elements[Exclude<RenderSurface, 'mobile'>]
 
-// The pane shows the team and the other sessions. It has no write actions: the team changes through the fleet tools.
-// `columns` is the width the pane has; frameOf cuts every line to fit inside the borders and padding.
 export type PaneModel = {
   columns: number
   rows: Row[]
   notes: Note[]
   pool?: readonly PooledTask[]
   detail?: Detail
+  now?: number
 }
 
 export type PaneActions = {
@@ -22,6 +21,7 @@ export type PaneActions = {
   onClose: () => void
   onSelect: (id: string) => void
   onBack: () => void
+  onAction: (key: string) => void
 }
 
 const toneProps = (tone: Tone): { bold?: boolean; dimColor?: boolean; color?: string } => {
@@ -46,10 +46,10 @@ const lineView = (els: Els, line: Line, key: string) => {
   )
 }
 
-const sectionLine = (els: Els, a: PaneActions, line: Line, key: string, member: string | undefined) => {
-  if (member === undefined) return lineView(els, line, key)
+const sectionLine = (els: Els, a: PaneActions, line: Line, key: string, id: string | undefined, prefix = 'member') => {
+  if (id === undefined) return lineView(els, line, key)
   return (
-    <els.Button key={`member:${member}`} plain onPress={() => a.onSelect(member)}>
+    <els.Button key={`${prefix}:${id}`} plain onPress={() => a.onSelect(id)}>
       {segments(els, line)}
     </els.Button>
   )
@@ -66,9 +66,16 @@ export const paneView = (els: Els, m: PaneModel, a: PaneActions) => {
       {frame.sections.map(s => (
         <Box key={s.title} flexDirection="column" borderStyle="round" borderDimColor paddingX={1} paddingY={1}>
           <Text dimColor>{s.title}</Text>
-          {s.lines.map((l, i) => sectionLine(els, a, l, `${s.title}-${i}`, s.press?.[i]))}
+          {s.lines.map((l, i) => sectionLine(els, a, l, `${s.title}-${i}`, s.press?.[i], s.pressKey))}
         </Box>
       ))}
+      {frame.actions.length > 0 && (
+        <Box gap={2}>
+          {frame.actions.map(action => (
+            <Button key={action.key} label={action.label} onPress={() => a.onAction(action.key)} />
+          ))}
+        </Box>
+      )}
       <Box>
         {frame.back && <Button key="back" label={BACK_LABEL} hotkey="b" onPress={a.onBack} />}
         {frame.back && <Text>  </Text>}

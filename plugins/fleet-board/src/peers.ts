@@ -78,6 +78,7 @@ export const resolvePeer = (peers: readonly Peer[], query: string): Resolved => 
   const number = /^\d+$/.test(q) ? peers[Number(q) - 1] : undefined
   if (number !== undefined) return { peer: number }
   const tiers = [
+    (p: Peer) => p.id.toLowerCase() === q,
     (p: Peer) => p.name.toLowerCase() === q,
     (p: Peer) => baseName(p.dir).toLowerCase() === q,
     (p: Peer) => p.name.toLowerCase().startsWith(q),

@@ -56,3 +56,5 @@ export const taskMessage = (boss: string, id: string, brief: Brief): string =>
 export const cancelMessage = (id: string): string => `Task ${id} is cancelled. Stop work on it; no report is needed.`
 
 export const DROP = 'You are off the team. Go back to what the user tells you.'
+
+export const roleChange = (role: Role): string => `Your role on the team is now ${role.name}.\nJob: ${role.job}\nFinish your current task first, unless the boss says otherwise.`

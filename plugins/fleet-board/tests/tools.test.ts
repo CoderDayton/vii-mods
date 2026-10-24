@@ -12,7 +12,10 @@ const deps = (drop: () => Promise<never>) => ({
   pool: async () => [],
   now: async () => 0,
   selfId: async () => 'me',
+  selfName: async () => 'claude-mods-1c',
   employment: async () => null,
+  store: { get: async () => undefined, set: async () => undefined, delete: async () => undefined, keys: async () => [] },
+  send: async () => null,
 })
 
 // The engine takes a tool's output as a string, an array, or undefined. An object such as { content, isError } is refused.

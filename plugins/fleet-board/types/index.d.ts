@@ -67,6 +67,7 @@ declare module 'claude-code' {
       notes: Note[]
       boss: string
       selected: string
+      cleared: string
     }
   }
 }

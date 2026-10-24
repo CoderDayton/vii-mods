@@ -1,6 +1,38 @@
 import { expect, test } from 'claude-code/testing'
 
+import { boardLines, moveSession } from '../src/crew'
 import { bossLabel, bossSection, employeeSection, hireKey, noticeOf, parseEmployment, parsePool, parseTeam, poolKey, STALE_MS, statusLine, teamKey, teamStatus } from '../src/team'
+
+test('a post made under a minute ago reads as now, not now ago', () => {
+  const team = { q1: { name: 'quorum-63', dir: '/p', role: 'research' as const, briefedAt: 1 } }
+  const lines = boardLines('me', team, { q1: { name: 'quorum-63', text: 'Lexer.', at: 1000 } }, 1000)
+  expect(lines).toContain('- quorum-63: Lexer. (now)')
+  expect(boardLines('me', team, { q1: { name: 'quorum-63', text: 'Lexer.', at: 0 } }, 120_000)).toContain('- quorum-63: Lexer. (2m ago)')
+})
+
+test('a /clear moves the pool and the goal even when the boss has no team left', async () => {
+  const m = new Map<string, unknown>([
+    ['pool:me', [{ id: 'p1', text: 'x', role: 'research', queuedAt: 1 }]],
+    ['post:me:me', { name: 'b', text: 'Goal.', at: 1 }],
+  ])
+  const store = { get: async (k: string) => m.get(k), set: async (k: string, v: unknown) => void m.set(k, v), delete: async (k: string) => void m.delete(k), keys: async () => [...m.keys()] }
+  await moveSession(store, 'me', 'me2')
+  expect([...m.keys()].sort()).toEqual(['pool:me2', 'post:me2:me2'])
+})
+
+test('an employee /clear moves its hire record and its post, and leaves its boss a renamed note', async () => {
+  const m = new Map<string, unknown>([
+    ['hire:me', { bossId: 'b1', bossName: 'boss-1', role: 'research' }],
+    ['post:b1:me', { name: 'claude-mods-1c', text: 'Lexer.', at: 1 }],
+  ])
+  const store = { get: async (k: string) => m.get(k), set: async (k: string, v: unknown) => void m.set(k, v), delete: async (k: string) => void m.delete(k), keys: async () => [...m.keys()] }
+  await moveSession(store, 'me', 'me2')
+  expect(Object.fromEntries(m)).toEqual({
+    'hire:me2': { bossId: 'b1', bossName: 'boss-1', role: 'research' },
+    'post:b1:me2': { name: 'claude-mods-1c', text: 'Lexer.', at: 1 },
+    'renamed:b1:me': 'me2',
+  })
+})
 
 test('the store keeps the team under the boss and each hire under the employee', () => {
   expect(teamKey('me')).toBe('team:me')
@@ -73,6 +105,14 @@ test('the employee section names its boss and role and says where reports go', (
   expect(text).toContain('claude-mods-1c (session me)')
   expect(text).toContain('Research')
   expect(text).toContain('Send your reports to session me')
+})
+
+test('the employee section says to decide design questions with evidence and bring them to the boss', () => {
+  const text = employeeSection({ bossId: 'me', bossName: 'claude-mods-1c', role: 'research' })
+  expect(text).toContain(
+    "When you hit a design decision, don't stop to ask. Research it, pick your solution, and bring it to your boss with evidence: data, measurements, sources. Web search and library docs are allowed and encouraged. Your boss decides. Only commits, pushes, deletions and dependency changes still go to the user.",
+  )
+  expect(text).not.toMatch(/mcp__searxng|mcp__context7/)
 })
 
 test('a stored member keeps its task id, send time and status, and a malformed task is left out', () => {

@@ -1,8 +1,8 @@
 # fleet-board
 
-A read-only pane for the other Claude sessions you run. It shows who is working, who went quiet, and the team your boss session has built. The boss hires, tasks, cancels and drops its team with five tools. The pane does not send anything.
+A pane for the other Claude sessions you run. It shows who is working, who went quiet, and the team your boss session has built. The boss hires, tasks, cancels and drops its team with tools; its employees message each other, post what they work on, and create tasks for the boss to queue. The pane hires, fires and sets roles.
 
-Run `/fleet` to open the pane, and `/fleet close` to close it.
+Run `/fleet init` to build a team: it asks which sessions to hire and the role of each, then hires them, and this session is their boss. It then asks you what the team should work on. Run `/fleet` to open the pane, and `/fleet close` to close it.
 
 ```
 ╭──────────────────────────────────────────────────╮
@@ -32,7 +32,9 @@ Run `/fleet` to open the pane, and `/fleet close` to close it.
 
 Sessions come from the registry Claude Code keeps in its config folder, so every session on the machine is listed, in the terminal or the desktop app. The list is read again every 4 seconds for as long as this session is open, whether the pane is open or not.
 
-The pane has two buttons: `r` refreshes, `c` closes. Each team member's first line is a button too: Tab or the arrows move to it, and Enter opens that member's detail. The detail shows its role, reply state and session state, the open task with its id, status and running time, the goal, scope and done condition, the newest reply, the queued tasks and the earlier ones. `b` goes back to the lists. The pane has no input and sends nothing.
+The pane has two buttons: `r` refreshes, `c` closes. Each team member's first line, and each row of the other sessions, is a button too: Tab or the arrows move to it, and Enter opens that session's detail. A member's detail shows its role, reply state and session state, the open task with its id, status and running time, the goal, scope and done condition, the newest reply, the queued tasks and the earlier ones. `b` goes back to the lists.
+
+The detail has the team actions. For a session not on the team: `hire as Specialist`, `hire as Local execution`, `hire as Research`, with `fleet_hire`'s rules. For a member: `make <role>` for each other role, which tells the member its new role, and `fire`, which drops it. A refused action shows as a note. Tasks go through the tools, not the pane.
 
 A team member's line shows its role, whether it has replied, whether its session is working or idle, its task id, how long a sent task has run, and how many tasks are queued for it.
 
@@ -40,13 +42,17 @@ A working session that has not changed state for 30 minutes gets a `!` after its
 
 Only sessions from the boss's own project are listed: those whose folder is the boss's folder or inside it. A sibling folder with a similar name (`/a/proj-2` next to `/a/proj`) is not inside it. If the scan has no entry for the boss, nothing is hidden. A team member stays in the team section wherever it runs. `fleet_hire` of a session outside the root returns an error that says so.
 
-A reply in the team section is shown whole, word-wrapped to the section under its status word, up to 12 lines and then a `... N more lines` line. A note wraps the same way up to 4 lines. Only the folder column of the sessions table is cut with an ellipsis.
+A reply in the team section is shown whole, word-wrapped to the section under its status word, up to 12 lines and then a `... N more lines` line. An activity entry wraps the same way up to 2 lines. Only the folder column of the sessions table is cut with an ellipsis.
 
-The pane is plain text and box-drawing characters, with dim borders and labels. The state word is always printed. A muted green marks `done`, red `blocked`, and yellow `asked`, `stale` and a quiet session. The team section appears only when the team has members, and the notes section only when there are notes.
+The pane is plain text and box-drawing characters, with dim borders and labels. The state word is always printed. A muted green marks `done`, red `blocked`, and yellow `asked`, `stale` and a quiet session. The team section appears only when the team has members, the other sessions section only when there are other sessions, and the activity section only when there is activity.
 
-## The boss's tools
+The activity section lists the last 5 things the fleet did, newest first, each with its age: what it told the boss (a task done, blocked, asked about, gone quiet, or created by an employee) and the result of each hire, task, cancel, role change and fire. A failure is red.
 
-The boss session has five model tools. The model names them `mcp__fleet-board__<name>`. They are listed in the prompt, not behind ToolSearch.
+The boss hears about changes through a turn started from the 4-second tick. Claude Code refuses to start a turn from inside a tool call or a slash command, so a change found during one waits for the next tick. A turn that cannot start yet is tried again on the next tick.
+
+## The tools
+
+The fleet has seven model tools. The model names them `mcp__fleet-board__<name>`. They are listed in the prompt, not behind ToolSearch.
 
 | Tool | Input | Does |
 | --- | --- | --- |
@@ -54,7 +60,11 @@ The boss session has five model tools. The model names them `mcp__fleet-board__<
 | `fleet_task` | `session` or `role`, `text`, optional `scope`, `done`, `after` | Queues one task with a six-character id, and sends it at once when nothing holds it. A session must be on the team; a role must have a member on it. |
 | `fleet_cancel` | `session`, `task`, or both | Cancels the open task and tells the member, or, with the id of a queued task, takes it off the queue. With `task` alone, finds that task on the team or in the pool and cancels it. |
 | `fleet_drop` | `session` | Takes the session off the team and tells it. |
-| `fleet_status` | none | Lists the team: each member, its role, reply state, task goal, id and status, last reply, queue and earlier tasks. |
+| `fleet_post` | `text` | Posts to the team's board. An employee posts what it works on; the boss posts the team goal. Each post replaces the poster's last one. |
+| `fleet_message` | `session`, `text` | Sends a message to anyone on the team, the boss included. Refused for a session off the team. |
+| `fleet_status` | none | Lists the team: each member, its role, reply state, task goal, id and status, last reply, queue and earlier tasks, then the board. |
+
+An employee of a running boss calls `fleet_status`, `fleet_post`, `fleet_message` and `fleet_task`. Its `fleet_task` does not send: it asks the boss, whose next scan queues the task and tells the boss who created it. `fleet_hire`, `fleet_cancel` and `fleet_drop` are refused for an employee.
 
 `session` takes the row number in the pane, the session's name, its folder name, or the start of its name. A name that matches more than one session is an error.
 
@@ -71,7 +81,7 @@ A message the boss sends with `SendMessage` reaches the session, but the team do
 The session that hires is the boss. Once it has a team, its system prompt says so and lists each employee by name, session id and role. Each employee's system prompt names its boss and the session its reports go to. Both records live in the plugin store, so they survive a restart.
 
 - Hire: `fleet_hire` sends the briefing and puts the session on the team at once. The member reads `waiting for a reply` until its transcript has a reply written after the briefing. Then it reads `ready`. The boss's system prompt shows the same state, read fresh each turn while a member is waiting. A member whose registry line is missing from three scans in a row leaves the team; one missing scan keeps it.
-- Queue: a member works one task at a time. A new task joins the member's queue, and the first queued task is sent once three things hold: the member has no task still `sent`, the boss has the notice of its last task, and the task `after` names, if any, is `done`. A task is sent at once when nothing holds it. A `blocked` task frees its member for the next one. The tool's answer says `sent <name> task <id>`, or `queued task <id> for <name>, behind task <id>` or `after task <id>`. Use `after` to order work across members: a review task can wait for a build task on another member.
+- Queue: a member works one task at a time. A new task joins the member's queue, and the first queued task is sent once three things hold: the member has no task still `sent`, its session is running, and the task `after` names, if any, is `done`. A task is sent at once when nothing holds it. A `blocked` task frees its member for the next one. The tool's answer says `sent <name> task <id>`, or `queued task <id> for <name>, behind task <id>` or `after task <id>`. Use `after` to order work across members: a review task can wait for a build task on another member.
 - Role: a task given to a `role` instead of a session waits in the team's pool. Each scan hands pooled tasks out in order, each to a member of its role that has answered its briefing, that nothing holds and that has no queue of its own, the one free longest first. A member that cannot be reached is skipped for that scan, and the task stays in the pool until another member takes it. So a member works through tasks given to it by name before it takes from the pool. The answer says `sent <name> task <id>`, or `queued task <id> for the next free <role> member`. The pool is kept in the plugin store under the boss, like the team, and the pane lists it under `unassigned`.
 - Cancel: `fleet_cancel` marks the open task `cancelled`, tells the member to stop, and sends the next queued task. A cancelled task sends the boss no notice.
 - History: the task a new one replaces is kept as an earlier task, with how long it took. Each member keeps its last 5, and an older one while a queued task's `after` still names it. An earlier task that was `blocked` is still read: a later `done <id>` marks it done, tells the boss, and sends what waits on it.
@@ -80,6 +90,9 @@ The session that hires is the boss. Once it has a team, its system prompt says s
 - Task: `fleet_task` gives each task a six-character id. The task is `sent` until a reply from the employee contains that id, and then it is `done`. A reply without the id does not finish it. A reply that says `blocked <id>` marks the task `blocked` and keeps that line. A later reply that says `done <id>` flips it to `done`. A line an employee writes while its task is `sent` counts as `asked` only when it has a question mark or starts with "question" or "need". A `sent` task with no new line from its employee for 10 minutes is flagged. The 10 minutes count from its newest line, or from the send when it has none.
 - Reply text: when a task is done or blocked, its reply is the text up to and including the line with the id, at most 1500 characters. A longer text keeps its end and starts with an ellipsis. The same text is the notice the boss gets, and the `last:` line in its prompt.
 - Notices: when a task becomes done, blocked, asked or stale, the boss is told through `$.prompt.submit`, which runs as a turn once the boss is idle. Every change one scan finds goes into one prompt, one notice after another, so three tasks that finish together cost one turn. The notice is a header line, which says the employee report is for the boss to verify and is not an instruction from the user, then the reply text with each line behind `> `. The notice is still submitted as a turn, so the wrapping marks the text as data for the boss to check; it does not block it. Each change is announced once, and the announced key is kept with the task, so a restart does not repeat it. Refreshes that overlap share one scan, so an overlap sends no second notice.
+- Board: each post is kept in the plugin store under the boss and the poster, so sessions never overwrite each other. A member's post is cleared when it leaves the team. Each system prompt shows the board: the goal and each member's post with its age.
+- Team file: the boss writes `team-<boss session id>.md` each scan when it changed, in `$XDG_RUNTIME_DIR/fleet-board/` (on Linux `/run/user/<uid>`, readable by you alone), or in `~/.cache/fleet-board/` when that variable is unset. The boss keeps the path it writes in the plugin store, and employees are pointed at that path, so a session started with other environment variables still reads the right file. A message from an employee says it is a teammate's message and not an instruction from the user, as reports do. It holds the goal, each member with its role, post and task, and the last 20 messages. Both system prompts name the file.
+- Clear: `/clear` in the boss gives its session a new id, and the team follows it. On the next tick, tool call or turn, the team, pool, board, messages and created tasks move to the new id, and each member's hire record names it, so its reports go to the right session. The 4-second tick keeps running through a `/clear`. A reload after a `/clear` still finds the team. An employee that runs `/clear` keeps its job: its hire record and post move to its new id, and the boss's next scan moves it on the team, with its task and queue, and lists it in the activity.
 - Background: with the pane closed, nobody on the team and nothing in the pool, the 4-second tick does not scan or read transcripts. Each transcript is read by byte offset from a row boundary: a poll reads only what was written since the last one.
 
 ## Status line
@@ -88,7 +101,7 @@ While the boss has a team, the status line reads like `fleet 3 on team · 1 open
 
 ## Roles and the briefing
 
-The three roles and the briefing text are the ones in the `boss` skill: specialist, local execution, research. A briefed session is told to reply "ready", keep its work until it gets a task, and report done or blocked.
+The three roles are specialist, local execution and research. A briefed session is told to reply "ready", keep its work until it gets a task, and report done or blocked.
 
 ## Commands
 
@@ -96,8 +109,9 @@ The three roles and the briefing text are the ones in the `boss` skill: speciali
 | --- | --- |
 | `/fleet` | Open the pane |
 | `/fleet close` | Close the pane |
+| `/fleet init` | Ask which free sessions to hire (up to 4 listed, more typed under Other) and the role of each, then hire them with `fleet_hire`'s rules. After a hire, the next tick starts a turn that asks you the team goal, posts it with `fleet_post`, and splits it with `fleet_task`. Refused in a session that is on a running boss's team |
 
-Any other word prints the usage line, which names the five tools.
+Any other word prints the usage line.
 
 ## Options
 

@@ -115,7 +115,7 @@ for (const columns of [60, 80, 120]) {
     expect(lines.at(-1)?.startsWith('╰') && lines.at(-1)?.endsWith('╯')).toBe(true)
     for (const line of lines.slice(1, -1)) expect(line.startsWith('│') && line.endsWith('│')).toBe(true)
     const text = lines.join('\n')
-    for (const word of ['fleet', 'done', 'blocked', 'asked', 'stale', 'working', 'idle', 'esc closes', '[ refresh ]', '[ close ]', 'ok', 'failed']) {
+    for (const word of ['fleet', 'done', 'blocked', 'asked', 'stale', 'working', 'idle', 'esc closes', '[ refresh ]', '[ close ]', 'activity']) {
       expect(text).toContain(word)
     }
     expect(/[^\x20-\x7e─│╭╮╰╯…\n]/.test(text)).toBe(false)
@@ -154,18 +154,27 @@ test('a reply of 30 lines shows 12 and then how many more', () => {
   expect(text).toContain('... 18 more lines')
 })
 
-test('a note is word-wrapped whole, up to 4 lines, then how many more', () => {
+test('an activity entry is word-wrapped up to 2 lines, then how many more', () => {
   const rows = rowsOf(PEERS, {}, NOW, 30 * MIN)
-  const lines = textOf(frameOf(rows, [{ ok: false, text: 'could not reach the session because the api broke and so on '.repeat(2), at: 1 }], 60), 60)
-  expect(Math.max(...lines.map(l => l.length))).toBeLessThanOrEqual(60)
-  const note = lines.filter(l => /^│ │ (failed |       )\S/.test(l)).join(' ')
-  expect(note).toContain('could not reach')
-  expect(note).toContain('and so on')
   const long = Array.from({ length: 10 }, (_, i) => `part${i + 1}`).join('\n')
-  const capped = textOf(frameOf(rows, [{ ok: true, text: long, at: 1 }], 60), 60).join('\n')
-  expect(capped).toContain('part4')
-  expect(capped).not.toContain('part5')
-  expect(capped).toContain('... 6 more lines')
+  const lines = textOf(frameOf(rows, [{ ok: true, text: long, at: NOW }], 60, { now: NOW }), 60)
+  expect(Math.max(...lines.map(l => l.length))).toBeLessThanOrEqual(60)
+  const text = lines.join('\n')
+  expect(text).toContain('part2')
+  expect(text).not.toContain('part3')
+  expect(text).toContain('... 8 more lines')
+})
+
+test('activity lists the newest entry first, each with its age, and a failure in red', () => {
+  const rows = rowsOf(PEERS, {}, NOW, 30 * MIN)
+  const notes = [
+    { ok: true, text: 'quorum-63: task k3x9qa is done.', at: NOW - 5 * MIN },
+    { ok: false, text: 'could not reach mnemos-9e: gone', at: NOW - 30_000 },
+  ]
+  const activity = frameOf(rows, notes, 80, { now: NOW }).sections.find(s => s.title === 'activity')
+  const plainLines = activity?.lines.map(l => l.map(s => s.text).join('').trimEnd())
+  expect(plainLines).toEqual(['now  could not reach mnemos-9e: gone', '5m   quorum-63: task k3x9qa is done.'])
+  expect(activity?.lines[0]?.at(-1)?.tone).toBe('error')
 })
 
 test('blocked, asked and stale lines start with their accent word, and done is green', () => {
@@ -178,11 +187,11 @@ test('blocked, asked and stale lines start with their accent word, and done is g
   expect(first('done')?.tone).toBe('success')
 })
 
-test('the team section is left out when nobody is on the team, and notes only when there are some', () => {
+test('the team section is left out when nobody is on the team, and activity only when there is some', () => {
   const rows = rowsOf(PEERS, {}, NOW, 30 * MIN)
   const titles = frameOf(rows, [], 80).sections.map(s => s.title)
   expect(titles).toEqual(['other sessions'])
-  expect(frameOf(rows, NOTES, 80).sections.map(s => s.title)).toEqual(['other sessions', 'notes'])
+  expect(frameOf(rows, NOTES, 80).sections.map(s => s.title)).toEqual(['other sessions', 'activity'])
 })
 
 test('the first line of each team member is pressable, keyed by its session id', () => {
@@ -219,7 +228,8 @@ for (const columns of [60, 80, 120]) {
   })
 }
 
-test('with no other sessions the pane says so in one line', () => {
+test('with no other sessions the header says so, and there is no empty sessions box', () => {
+  expect(frameOf([], [], 80).sections).toEqual([])
   const text = textOf(frameOf([], [], 80), 80).join('\n')
   expect(text).toContain('no other sessions')
   expect(text).not.toContain('team')

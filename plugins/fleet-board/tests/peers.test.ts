@@ -79,6 +79,11 @@ test('a target resolves by exact name, number, folder or unique prefix', () => {
   expect(resolvePeer(FLEET, 'quorum-7')).toEqual({ peer: FLEET[1] })
 })
 
+test('a session id resolves to that session even when its name is shared', () => {
+  const twins = [peer({ id: 'aaa-111', name: 'twin', dir: '/p/a' }), peer({ id: 'bbb-222', name: 'twin', dir: '/p/b' })]
+  expect(resolvePeer(twins, 'bbb-222')).toEqual({ peer: twins[1] })
+})
+
 test('an ambiguous or unknown target is an error that names what matched', () => {
   expect(resolvePeer(FLEET, 'quorum')).toEqual({ error: 'quorum matches several sessions: quorum-63, quorum-79' })
   expect(resolvePeer(FLEET, 'nope')).toEqual({ error: 'no running session matches "nope"' })
