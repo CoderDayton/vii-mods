@@ -49,13 +49,17 @@ export const sameError = (text: string, weights: ReadonlyMap<string, number>): b
 
 const LABEL: Record<EntryKind, string> = { cmd: 'then ran', assistant: 'said', user: 'asked', error: 'then hit', thinking: 'thought', edit: 'changed', summary: 'summed up', call: 'called', result: 'returned', image: 'pasted' }
 
-const render = (fix: Fix, terms: readonly string[]): string =>
-  [headOf(fix), `  ${'error'.padEnd(9)} ${snippetOf(fix.error, terms, LINE_WIDTH)}`, ...fix.then.map(e => `  ${LABEL[e.kind].padEnd(9)} ${snippetOf(textInLine(e.kind, e.text), [], LINE_WIDTH)}`)].join('\n')
+const render = (fix: Fix, terms: readonly string[], brief: boolean): string =>
+  [
+    headOf(fix),
+    `  ${'error'.padEnd(9)} ${snippetOf(fix.error, terms, LINE_WIDTH)}`,
+    ...fix.then.filter(e => !brief || e.kind !== 'assistant').map(e => `  ${LABEL[e.kind].padEnd(9)} ${snippetOf(textInLine(e.kind, e.text), [], LINE_WIDTH)}`),
+  ].join('\n')
 
-export const formatFixes = (fixes: readonly Fix[], terms: readonly string[], options: { maxChars: number }): string => {
+export const formatFixes = (fixes: readonly Fix[], terms: readonly string[], options: { maxChars: number; brief?: boolean }): string => {
   if (fixes.length === 0) return NO_FIX
   const kept = fitBlocks(
-    fixes.map(f => render(f, terms)),
+    fixes.map(f => render(f, terms, options.brief === true)),
     options.maxChars,
   )
   const left = fixes.length - kept.length

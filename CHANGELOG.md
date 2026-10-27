@@ -6,6 +6,7 @@ All notable changes to the vii-mods marketplace are listed here, newest first, e
 
 ### Added
 
+- **lookback:** a search no longer sends again the lines an earlier search of the same conversation sent; reading a session by id still sends it whole, and a compaction or `/clear` starts over
 - **fleet-board:** add `/fleet init`, which asks in Claude Code's question dialog which free sessions to hire and the role of each, then hires them and makes this session their boss. A turn then asks you the team goal and splits it into tasks
 - **fleet-board:** add `fleet_message` and `fleet_post`: anyone on a team can message a teammate or the boss, and post what it works on to a shared board. The boss keeps a team file at `$XDG_RUNTIME_DIR/fleet-board/team-<boss>.md` (or `~/.cache/fleet-board/`) with the goal, the board and the messages
 - **fleet-board:** an employee's `fleet_task` asks its boss, whose next scan queues the task
@@ -14,11 +15,13 @@ All notable changes to the vii-mods marketplace are listed here, newest first, e
 
 ### Changed
 
+- **lookback:** file and error notes are shorter, and the note after a failed command leaves out what was said (`fix --brief`)
 - **fleet-board:** an employee of a running boss can no longer cancel tasks or drop members
 - **fleet-board:** the pane's notes box is now an activity list: newest first, each entry with its age, including what the boss was told. The empty other sessions box is gone
 
 ### Fixed
 
+- **lookback:** a plugin reload no longer repeats file notes, error notes and recalled sessions already shown; `/clear` starts them over
 - **fleet-board:** `/clear` in a boss no longer loses its team. The team moves to the new session id, and the tick that sends tasks and notices keeps running
 - **fleet-board:** `/clear` in an employee no longer drops it from the team; the boss follows it to its new session id
 - **fleet-board:** one fleet tool call scans the sessions once

@@ -1,9 +1,11 @@
+import { atom, read, update } from 'claude-code'
 import type { Hook, Register } from 'claude-code'
 
 import { NO_COMMAND, NO_FIX, TOOL_NAME, TOOL_SPEC, WHEN_TO_SEARCH, argvOf, askedArgv, captionNotice, cliEnv, commandArgv, commandText, fileContext, fileNoteArgv, fixContext, recallArgv, recallContext, recentSection, requestOf, shownIds } from '../src/core/call'
 import { readOptions } from '../src/core/options'
 import type { Options } from '../src/core/options'
 import { errorGist } from '../src/core/search/fix'
+import { cutSent } from '../src/core/seen'
 import { worthAsking } from '../src/core/search/gate'
 import { asksAboutPast } from '../src/core/search/intent'
 import { fileCallOf, fileToolsOf } from '../src/core/transcript/touches'
@@ -31,6 +33,12 @@ const NOTE_MS = 3000
 const NOTE_FILES = 2
 const TRANSCRIPT_MS = 800
 const NO_BUN = 'lookback could not run. Is bun installed?'
+
+// What this session was already shown, kept across reloads of the plugin and dropped on /clear.
+const notedAtom = atom({ plugin: 'lookback', key: 'noted' } as const, [])
+const lookedUpAtom = atom({ plugin: 'lookback', key: 'lookedUp' } as const, [])
+const shownAtom = atom({ plugin: 'lookback', key: 'shown' } as const, [])
+const sentAtom = atom({ plugin: 'lookback', key: 'sent' } as const, {})
 
 const wait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -90,7 +98,7 @@ const captionImages = async ($: Engine, options: Options, state: Captioning): Pr
 // What past sessions ran after the error a failed command ended with, as a block for the model, or null.
 const pastFix = async ($: Engine, options: Options, gist: string): Promise<string | null> => {
   try {
-    const argv = argvOf({ query: gist, mode: 'fix', limit: FIX_LIMIT }, { limit: FIX_LIMIT, exclude: await $.session.id() })
+    const argv = argvOf({ query: gist, mode: 'fix', limit: FIX_LIMIT }, { limit: FIX_LIMIT, exclude: await $.session.id(), brief: true })
     const run = await lookback($, options, argv, FIX_MS)
     return run.code !== 0 || run.out === '' || run.out === NO_FIX ? null : fixContext(run.out)
   } catch {
@@ -123,12 +131,6 @@ export const register: Register = (on, raw) => {
   const isFileTool = fileToolsOf(options.fileTools)
   let digest: Promise<string> = Promise.resolve('')
   let folder = ''
-  // The sessions this one was already shown, by the start of their ids.
-  const shown = new Set<string>()
-  // The errors already looked up in this session: a command retried in a loop asks once.
-  const lookedUp = new Set<string>()
-  // The files already noted in this session: a file is noted on its first touch only.
-  const noted = new Set<string>()
   const captionsOn = options.autoIndex && (options.captionServer !== '' || options.captionModel !== '')
   let imagesWaiting = false
   let imagesRecheck = false
@@ -161,20 +163,28 @@ export const register: Register = (on, raw) => {
       const out = await next(e)
       if (out.isError !== true) return out
       const gist = errorGist(out.text ?? '')
-      if (gist.length < MIN_GIST_CHARS || lookedUp.has(gist)) return out
-      lookedUp.add(gist)
+      if (gist.length < MIN_GIST_CHARS) return out
+      let fresh = false
+      await update($, lookedUpAtom, seen => {
+        fresh = !seen.includes(gist)
+        return fresh ? [...seen, gist] : seen
+      })
+      if (!fresh) return out
       const found = await pastFix($, options, gist)
       return found === null ? out : { ...out, context: [...(out.context ?? []), found] }
     }
     const touched = options.fileNotes ? fileCallOf(e.tool, e, isFileTool) : null
     if (touched !== null) {
-      const fresh = touched.paths.filter(p => !noted.has(p)).slice(0, NOTE_FILES)
-      for (const path of fresh) noted.add(path)
+      let fresh: string[] = []
+      await update($, notedAtom, noted => {
+        fresh = touched.paths.filter(p => !noted.includes(p)).slice(0, NOTE_FILES)
+        return fresh.length === 0 ? noted : [...noted, ...fresh]
+      })
       // The lookups run beside the call; they never reject.
       const looked = Promise.all(fresh.map(path => pastOfFile($, options, path, folder)))
       const out = await next(e)
       if (out.deny !== undefined) {
-        for (const path of fresh) noted.delete(path)
+        await update($, notedAtom, noted => noted.filter(p => !fresh.includes(p)))
         return out
       }
       const notes = (await looked).filter((n): n is string => n !== null)
@@ -186,11 +196,40 @@ export const register: Register = (on, raw) => {
     try {
       const argv = argvOf(request, { limit: options.limit, exclude: await $.session.id(), ownTurns: true })
       const run = await lookback($, options, argv, SEARCH_MS)
-      return run.code === 0 ? asToolResult(run.out) : asToolResult(run.err || `lookback exited with ${run.code}`, true)
+      if (run.code !== 0) return asToolResult(run.err || `lookback exited with ${run.code}`, true)
+      const loop = e.agentId ?? ''
+      const isRead = request.session !== undefined
+      let text = run.out
+      await update($, sentAtom, all => {
+        const seen = new Set(all[loop] ?? [])
+        const cut = cutSent(run.out, isRead ? new Set() : seen)
+        if (!isRead) text = cut.text
+        const fresh = cut.sent.filter(line => !seen.has(line))
+        return fresh.length === 0 ? all : { ...all, [loop]: [...(all[loop] ?? []), ...fresh] }
+      })
+      return asToolResult(text)
     } catch {
       return asToolResult(NO_BUN, true)
     }
   }).catch(($, e, next) => (e.tool === TOOL ? asToolResult('lookback could not answer the search.', true) : next(e)))
+
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') {
+      await update($, notedAtom, () => [])
+      await update($, lookedUpAtom, () => [])
+      await update($, shownAtom, () => [])
+      await update($, sentAtom, () => ({}))
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('session.compact', async ($, e, next) => {
+    const out = await next(e)
+    if (e.trigger === 'precompute' || out.skip !== undefined) return out
+    const loop = e.agentId ?? ''
+    await update($, sentAtom, all => Object.fromEntries(Object.entries(all).filter(([key]) => key !== loop)))
+    return out
+  }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'lookback' }, async ($, e) => {
     try {
@@ -235,11 +274,12 @@ export const register: Register = (on, raw) => {
         const run = await lookback($, options, askedArgv(e.text, me), ASKED_MS)
         if (run.code === 0) found = run.out
       } else if (worthAsking(e.text)) {
-        const run = await lookback($, options, recallArgv(e.text, folder, me, shown), GATE_MS)
+        const run = await lookback($, options, recallArgv(e.text, folder, me, new Set(await read($, shownAtom))), GATE_MS)
         if (run.code === 0) found = run.out
       }
       if (found === '') return next(e)
-      for (const id of shownIds(found)) shown.add(id)
+      const ids = shownIds(found)
+      await update($, shownAtom, shown => [...shown, ...ids.filter(id => !shown.includes(id))])
       return next({ ...e, context: [...(e.context ?? []), recallContext(found)] })
     } catch {
       return next(e)

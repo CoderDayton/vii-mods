@@ -44,6 +44,14 @@ test('a fix shows the session, the error, the commands run after it and what was
   ])
 })
 
+test('a brief fix leaves out what was said, keeping the commands and the error', () => {
+  expect(formatFixes([fix()], ['pil'], { maxChars: 2000, brief: true }).split('\n')).toEqual([
+    '2026-09-28  glowseed-garden  45b0ec34',
+    "  error     ModuleNotFoundError: No module named 'PIL'",
+    '  then ran  pip install pillow',
+  ])
+})
+
 test('a pasted image shows its caption first and the file it is kept in last', () => {
   const image = { kind: 'image' as const, text: `/home/u/.local/share/lookback/images/${'ab'.repeat(32)}.png\nSettings pane, the Save button cut off` }
   expect(formatFixes([fix({ then: [image] })], [], { maxChars: 2000 }).split('\n')[2]).toBe(`  pasted    Settings pane, the Save button cut off (${'ab'.repeat(32)}.png)`)

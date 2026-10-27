@@ -35,6 +35,7 @@ const world = (on: Parameters<typeof mock.clock>[0]) => {
   on('tool.call', () => w.bash as never)
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'me' }))
+  on('session.end', (_$, e) => ({ sessionId: e.sessionId }) as never)
   on('fs.exists', () => ({ value: w.installed }) as never)
   on('process.run', async (_$, e) => {
     if (e.argv[2] === 'recent') {
@@ -224,6 +225,47 @@ test('a bad tool input is answered as an error and runs nothing', async ($, on) 
   expect(w.calls).toEqual([])
 })
 
+const PAST = '2026-10-09  claude-mods  d18dbf28\n  assistant The doubled brackets are fixed in the renderer now.'
+
+test('a search does not send again what an earlier search sent', async ($, on) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  await settle()
+  w.out = PAST
+  expect((await callTool($, { query: 'brackets' })).result).toBe(PAST)
+  const again = (await callTool($, { query: 'doubled brackets' })).result ?? ''
+  expect(again).toContain('2026-10-09  claude-mods  d18dbf28')
+  expect(again).toContain('already sent')
+  expect(again).not.toContain('renderer now')
+})
+
+test('reading a session is never cut, and a compaction or /clear sends it all again', async ($, on) => {
+  const w = world(on)
+  on('session.compact', (_$, e) => ({ messages: e.messages }))
+  await $.session.start(LIVE)
+  await settle()
+  w.out = PAST
+  await callTool($, { query: 'brackets' })
+  expect((await callTool($, { session: 'd18dbf28' })).result).toBe(PAST)
+  const kept = [{ role: 'user', text: 'summary', toolUses: [], toolResults: [] }]
+  await $.session.compact({ trigger: 'precompute', messages: kept } as never)
+  expect((await callTool($, { query: 'brackets' })).result).toContain('already sent')
+  await $.session.compact({ trigger: 'manual', messages: kept } as never)
+  expect((await callTool($, { query: 'brackets' })).result).toBe(PAST)
+  await $.session.end({ reason: 'clear', sessionId: 'me' } as never)
+  expect((await callTool($, { query: 'brackets' })).result).toBe(PAST)
+})
+
+test('a subagent is sent what the main conversation was already sent', async ($, on) => {
+  const w = world(on)
+  await $.session.start(LIVE)
+  await settle()
+  w.out = PAST
+  await callTool($, { query: 'brackets' })
+  expect((await callTool($, { query: 'brackets', agentId: 'a1' })).result).toBe(PAST)
+  expect((await callTool($, { query: 'brackets', agentId: 'a1' })).result).toContain('already sent')
+})
+
 test('a search that fails is answered as an error with the reason', async ($, on) => {
   const w = world(on)
   await $.session.start(LIVE)
@@ -256,7 +298,7 @@ test('a shell command that fails gets what past sessions ran after the same erro
   expect(out.context).toHaveLength(1)
   expect(out.context?.[0]).toContain('<lookback-fix>')
   expect(out.context?.[0]).toContain('pip install pillow')
-  expect(cli(w)[0]?.argv.slice(2)).toEqual(['fix', '--limit', '2', '--exclude', 'me', '--', "ModuleNotFoundError: No module named 'PIL'"])
+  expect(cli(w)[0]?.argv.slice(2)).toEqual(['fix', '--limit', '2', '--exclude', 'me', '--brief', '--', "ModuleNotFoundError: No module named 'PIL'"])
 })
 
 test('the same error is looked up once in a session', async ($, on) => {
@@ -459,6 +501,22 @@ test('a file with no history, a tool that names no file and a lookup that fails 
   w.out = NOTE
   w.code = 1
   expect((await touch($, 'Read', { file_path: '/work/d.ts' })).context).toBeUndefined()
+})
+
+test('after a /clear, an error is looked up and a file is noted again', { options: FILES }, async ($, on) => {
+  const w = await started($, on)
+  w.bash = { isError: true, result: TRACE, text: TRACE }
+  w.out = FIXED
+  await bash($)
+  w.out = NOTE
+  await touch($, 'Read', { file_path: '/work/b.ts' })
+  await $.session.end({ reason: 'clear', sessionId: 'me' } as never)
+  w.calls.length = 0
+  w.out = FIXED
+  expect((await bash($)).context).toHaveLength(1)
+  w.out = NOTE
+  expect((await touch($, 'Read', { file_path: '/work/b.ts' })).context).toHaveLength(1)
+  expect(cli(w).map(subcommand)).toEqual(['fix', 'blame'])
 })
 
 test('file notes can be switched off', { options: { ...FILES, fileNotes: false } }, async ($, on) => {

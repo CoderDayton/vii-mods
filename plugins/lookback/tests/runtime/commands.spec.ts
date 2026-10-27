@@ -149,6 +149,12 @@ test('fix shows what was run after the error in each session that got past it', 
   ])
 })
 
+test('fix --brief leaves out what was said', async () => {
+  const { out } = await run(['fix', '--brief', "ModuleNotFoundError: No module named 'PIL'"])
+  expect(out).not.toContain('  said ')
+  expect(out).toContain('  then ran  pip install pillow')
+})
+
 test('fix wants most of the words of the error, and says so when nothing fits', async () => {
   expect((await run(['fix', 'ModuleNotFoundError', 'numpy', 'scipy', 'pandas'])).out).toBe('No past session got past this error.\n')
   expect((await run(['fix', 'PIL', '--exclude', A])).out).toBe('No past session got past this error.\n')

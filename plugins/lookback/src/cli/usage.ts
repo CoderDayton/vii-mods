@@ -40,7 +40,7 @@ Commands:
       the new turns of that session first, and searches them too, up to its
       last exchange. The words of that exchange name the topic, and an entry
       must hold three topic words to be printed.
-  lookback fix <error text...> [--limit <n>] [--project <text>] [--since <span>] [--exclude <id>] [--json]
+  lookback fix <error text...> [--limit <n>] [--project <text>] [--since <span>] [--exclude <id>] [--brief] [--json]
       Past sessions that hit the same error, with what each ran or changed and how that turn ended.
   lookback how <words...> [--limit <n>] [--project <text>] [--since <span>] [--json]
       The shell commands that hold every word, the most run first.

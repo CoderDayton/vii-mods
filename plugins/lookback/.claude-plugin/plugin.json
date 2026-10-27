@@ -1,6 +1,7 @@
 {
   "name": "lookback",
   "version": "0.1.0",
+  "types": "./types/index.d.ts",
   "description": "Searches your past Claude Code sessions by words and by meaning. A local SQLite index and local Ollama embeddings, no cloud, no daemon.",
   "userConfig": {
     "limit": {

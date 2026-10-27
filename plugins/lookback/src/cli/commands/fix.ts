@@ -16,6 +16,7 @@ const OPTIONS = {
   project: { type: 'string' },
   since: { type: 'string' },
   exclude: { type: 'string' },
+  brief: { type: 'boolean' },
   json: { type: 'boolean' },
 } as const
 
@@ -29,7 +30,7 @@ export const fix = async (argv: string[], io: Io, config: Config): Promise<ExitC
   if ('code' in opened) return opened.code
   try {
     const result = findFixes(opened.store, error, { now: io.now(), limit, project: values.project, since, excludeSession: values.exclude })
-    io.stdout(values.json === true ? `${JSON.stringify(result, null, 2)}\n` : `${formatFixes(result.fixes, result.terms, { maxChars: OUTPUT_CHARS })}\n`)
+    io.stdout(values.json === true ? `${JSON.stringify(result, null, 2)}\n` : `${formatFixes(result.fixes, result.terms, { maxChars: OUTPUT_CHARS, brief: values.brief === true })}\n`)
     return EXIT.ok
   } finally {
     opened.store.close()
