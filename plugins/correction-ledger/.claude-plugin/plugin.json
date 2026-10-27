@@ -1,6 +1,6 @@
 {
   "name": "correction-ledger",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Saves each correction you make as a rule, sends it every turn or when Claude makes the call it is about, makes it louder each time it is broken, and removes it when it is no longer used.",
   "userConfig": {
     "model": {

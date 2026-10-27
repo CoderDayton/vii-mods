@@ -15,6 +15,7 @@ All notable changes to the vii-mods marketplace are listed here, newest first, e
 
 ### Changed
 
+- every plugin is now version 0.1.1, so `/plugin update` replaces the copies installed on 0.1.0
 - **lookback:** file and error notes are shorter, and the note after a failed command leaves out what was said (`fix --brief`)
 - **fleet-board:** an employee of a running boss can no longer cancel tasks or drop members
 - **fleet-board:** the pane's notes box is now an activity list: newest first, each entry with its age, including what the boss was told. The empty other sessions box is gone

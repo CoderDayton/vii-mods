@@ -1,6 +1,6 @@
 {
   "name": "gpu-lock",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "One CUDA job at a time, or shared up to a memory limit: locks the GPU across sessions, checks free memory first, and shows who runs and who waits.",
   "types": "./types/index.d.ts",
   "userConfig": {

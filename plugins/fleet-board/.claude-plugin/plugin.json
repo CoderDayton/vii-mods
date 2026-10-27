@@ -1,6 +1,6 @@
 {
   "name": "fleet-board",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A read-only pane for the other Claude sessions you run: who is working, who went quiet, and the team your boss session builds with its fleet tools.",
   "types": "./types/index.d.ts",
   "userConfig": {

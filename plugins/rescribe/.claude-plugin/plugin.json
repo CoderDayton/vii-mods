@@ -1,6 +1,6 @@
 {
   "name": "rescribe",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Prompt enhancer: a shortcut rewrites the draft in the prompt box, and a menu shows the change to apply or dismiss.",
   "types": "./types/index.d.ts",
   "userConfig": {

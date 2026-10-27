@@ -1,6 +1,6 @@
 {
   "name": "smart-comments",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Reads each comment Claude adds, lets through the ones that tell a reader what the code cannot, skips docstrings, and names the lines to cut.",
   "userConfig": {
     "maxPlain": {
