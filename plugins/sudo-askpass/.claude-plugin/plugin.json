@@ -1,0 +1,22 @@
+{
+  "name": "sudo-askpass",
+  "version": "0.1.0",
+  "description": "Lets Claude run sudo commands: each one opens a password dialog on your screen that shows the command. Your password goes straight to sudo; Claude never sees it.",
+  "userConfig": {
+    "cache": {
+      "type": "string",
+      "title": "Password prompts",
+      "description": "every asks for your password on every sudo call. sudo reuses sudo's own cached login for a few minutes after you enter it once.",
+      "options": ["every", "sudo"],
+      "default": "every"
+    },
+    "timeoutSeconds": {
+      "type": "number",
+      "title": "Dialog timeout (seconds)",
+      "description": "How long the password dialog waits before the sudo call fails. Cancel also fails it.",
+      "default": 120,
+      "min": 10,
+      "max": 600
+    }
+  }
+}

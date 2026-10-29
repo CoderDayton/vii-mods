@@ -44,6 +44,12 @@
       "source": "./plugins/cues",
       "description": "Sound for Claude Code on Linux: mechanical key sounds as you type, and a chime when you send a prompt, when the reply lands and when a turn fails.",
       "category": "tools"
+    },
+    {
+      "name": "sudo-askpass",
+      "source": "./plugins/sudo-askpass",
+      "description": "Lets Claude run sudo commands: each call opens a password dialog on your screen that shows the command, and the password goes straight to sudo.",
+      "category": "tools"
     }
   ]
 }

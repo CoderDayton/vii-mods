@@ -11,6 +11,7 @@ Mods that make Claude Code remember more, waste less and sound better.
 | [**lookback**](#lookback) | Search every past session by words and by meaning, on your own machine. |
 | [**smart-comments**](#smart-comments) | Keeps the comments that tell a reader something, and has Claude cut the rest. |
 | [**cues**](#cues) | Mechanical key sounds as you type, and a chime when a reply lands. For Linux. |
+| [**sudo-askpass**](plugins/sudo-askpass) | Claude can run `sudo`: each call opens a password dialog that shows the command. The password goes straight to sudo. |
 
 ## Install
 

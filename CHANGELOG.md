@@ -6,6 +6,7 @@ All notable changes to the vii-mods marketplace are listed here, newest first, e
 
 ### Added
 
+- **sudo-askpass:** new mod. Claude can run `sudo`: each call opens a `zenity` password dialog that shows the command, and the password goes straight to sudo. Every call asks again unless `cache` is set to `sudo`; `sudo -S` is refused
 - **lookback:** a search no longer sends again the lines an earlier search of the same conversation sent; reading a session by id still sends it whole, and a compaction or `/clear` starts over
 - **fleet-board:** add `/fleet init`, which asks in Claude Code's question dialog which free sessions to hire and the role of each, then hires them and makes this session their boss. A turn then asks you the team goal and splits it into tasks
 - **fleet-board:** add `fleet_message` and `fleet_post`: anyone on a team can message a teammate or the boss, and post what it works on to a shared board. The boss keeps a team file at `$XDG_RUNTIME_DIR/fleet-board/team-<boss>.md` (or `~/.cache/fleet-board/`) with the goal, the board and the messages
